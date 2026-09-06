@@ -1,4 +1,4 @@
-name: Build ServerTeleport Velocity Bridge v1.5.0
+name: Build HologramPlugin Bridge v1.6.0
 
 on:
   workflow_dispatch:
@@ -9,7 +9,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup Java 21
         uses: actions/setup-java@v5
         with:
@@ -20,278 +19,227 @@ jobs:
         shell: bash
         run: |
           set -e
-          mkdir -p src/main/java/pl/reniferek/servertp src/main/resources
-
+          mkdir -p src/main/java/pl/reniferek/hologram src/main/resources
           cat > pom.xml <<'POM'
           <?xml version="1.0" encoding="UTF-8"?>
-          <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+          <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
             <modelVersion>4.0.0</modelVersion>
-            <groupId>pl.reniferek</groupId><artifactId>ServerTeleport-Velocity</artifactId><version>1.5.0</version>
-            <properties><maven.compiler.release>21</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
+            <groupId>pl.reniferek</groupId><artifactId>HologramPlugin</artifactId><version>1.6.0</version>
+            <properties><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding><maven.compiler.release>21</maven.compiler.release></properties>
             <repositories><repository><id>papermc</id><url>https://repo.papermc.io/repository/maven-public/</url></repository></repositories>
-            <dependencies><dependency><groupId>com.velocitypowered</groupId><artifactId>velocity-api</artifactId><version>3.4.0-SNAPSHOT</version><scope>provided</scope></dependency></dependencies>
+            <dependencies><dependency><groupId>io.papermc.paper</groupId><artifactId>paper-api</artifactId><version>1.21.4-R0.1-SNAPSHOT</version><scope>provided</scope></dependency></dependencies>
             <build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version><configuration><release>21</release></configuration></plugin></plugins></build>
           </project>
           POM
 
-          cat > src/main/resources/velocity-plugin.json <<'JSON'
-          {"id":"serverteleport","name":"ServerTeleport","version":"1.5.0","authors":["Reniferek"],"dependencies":[],"main":"pl.reniferek.servertp.ServerTeleportVelocity"}
-          JSON
+          cat > src/main/resources/plugin.yml <<'YML'
+          name: HologramPlugin
+          version: 1.6.0
+          main: pl.reniferek.hologram.HologramPlugin
+          api-version: '1.21'
+          author: Reniferek
+          commands:
+            hologram:
+              description: Zarzadzanie hologramami
+              usage: /hologram help
+              aliases: [holo]
+              permission: hologram.admin
+          permissions:
+            hologram.admin:
+              default: op
+          YML
 
-          cat > src/main/java/pl/reniferek/servertp/ServerTeleportVelocity.java <<'JAVA'
-          package pl.reniferek.servertp;
+          cat > src/main/resources/config.yml <<'YML'
+          hologram:
+            line-spacing: 0.25
+            line-width: 100000
+            shadow: false
+            see-through: true
+          YML
+
+          cat > src/main/java/pl/reniferek/hologram/HologramPlugin.java <<'JAVA'
+          package pl.reniferek.hologram;
 
           import com.google.common.io.ByteArrayDataInput;
           import com.google.common.io.ByteArrayDataOutput;
           import com.google.common.io.ByteStreams;
-          import com.google.inject.Inject;
-          import com.velocitypowered.api.command.CommandSource;
-          import com.velocitypowered.api.command.SimpleCommand;
-          import com.velocitypowered.api.event.Subscribe;
-          import com.velocitypowered.api.event.connection.DisconnectEvent;
-          import com.velocitypowered.api.event.connection.PluginMessageEvent;
-          import com.velocitypowered.api.event.player.ServerPostConnectEvent;
-          import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
-          import com.velocitypowered.api.proxy.Player;
-          import com.velocitypowered.api.proxy.ProxyServer;
-          import com.velocitypowered.api.proxy.ServerConnection;
-          import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
-          import com.velocitypowered.api.proxy.server.RegisteredServer;
-          import com.velocitypowered.api.proxy.server.ServerPing;
-          import com.velocitypowered.api.scheduler.ScheduledTask;
           import net.kyori.adventure.text.Component;
-          import net.kyori.adventure.text.format.NamedTextColor;
+          import net.kyori.adventure.text.TextComponent;
+          import net.kyori.adventure.text.format.TextColor;
+          import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+          import org.bukkit.Bukkit;
+          import org.bukkit.ChatColor;
+          import org.bukkit.Location;
+          import org.bukkit.NamespacedKey;
+          import org.bukkit.World;
+          import org.bukkit.command.*;
+          import org.bukkit.configuration.ConfigurationSection;
+          import org.bukkit.configuration.file.YamlConfiguration;
+          import org.bukkit.entity.Display;
+          import org.bukkit.entity.Entity;
+          import org.bukkit.entity.Player;
+          import org.bukkit.entity.TextDisplay;
+          import org.bukkit.event.EventHandler;
+          import org.bukkit.event.Listener;
+          import org.bukkit.event.player.PlayerJoinEvent;
+          import org.bukkit.event.player.PlayerQuitEvent;
+          import org.bukkit.persistence.PersistentDataType;
+          import org.bukkit.plugin.java.JavaPlugin;
 
+          import java.io.File;
           import java.io.IOException;
-          import java.nio.file.Files;
-          import java.nio.file.Path;
-          import java.util.List;
-          import java.util.Locale;
-          import java.util.Optional;
-          import java.util.Properties;
-          import java.util.concurrent.TimeUnit;
+          import java.util.*;
+          import org.bukkit.util.Transformation;
+          import org.joml.Vector3f;
+          import org.joml.AxisAngle4f;
 
-          public final class ServerTeleportVelocity {
-              private static final String TARGET_SERVER = "LifeStealSMPspawn";
-              private static final List<String> HUBS = List.of("hub1", "hub2", "hub3");
-              private static final MinecraftChannelIdentifier TELEPORT_CHANNEL = MinecraftChannelIdentifier.create("serverteleport", "main");
-              private static final MinecraftChannelIdentifier STATS_CHANNEL = MinecraftChannelIdentifier.create("serverteleport", "stats");
+          public final class HologramPlugin extends JavaPlugin implements Listener {
+              private static final String STATS_CHANNEL = "serverteleport:stats";
+              private final Map<Integer, HologramData> holograms = new HashMap<>();
+              private final Map<Integer, Map<UUID, List<UUID>>> personal = new HashMap<>();
+              private final Set<Integer> dynamicIds = new HashSet<>();
+              private final LegacyComponentSerializer legacy = LegacyComponentSerializer.legacyAmpersand();
+              private NamespacedKey idKey;
+              private double spacing;
+              private int lineWidth;
+              private boolean shadow;
+              private boolean seeThrough;
+              private int lifeOnline;
+              private int lifeMax;
+              private boolean lifeStatus;
+              private boolean lifeBlockade;
 
-              private final ProxyServer proxy;
-              private final Path dataDirectory;
-              private volatile boolean blockade;
-              private volatile int lifeStealOnline;
-              private volatile int lifeStealMax;
-              private volatile boolean lifeStealReachable;
-              private volatile ScheduledTask pingTask;
-
-              @Inject
-              public ServerTeleportVelocity(ProxyServer proxy,
-                      @com.velocitypowered.api.plugin.annotation.DataDirectory Path dataDirectory) {
-                  this.proxy = proxy;
-                  this.dataDirectory = dataDirectory;
-                  loadConfig();
+              @Override public void onEnable() {
+                  saveDefaultConfig();
+                  getDataFolder().mkdirs();
+                  new File(getDataFolder(), "hologramy").mkdirs();
+                  idKey = new NamespacedKey(this, "hologram-id");
+                  spacing = getConfig().getDouble("hologram.line-spacing", .25D); if (spacing <= 0) spacing=.25D;
+                  lineWidth = getConfig().getInt("hologram.line-width", 100000); if (lineWidth < 1) lineWidth=100000;
+                  shadow=getConfig().getBoolean("hologram.shadow", false); seeThrough=getConfig().getBoolean("hologram.see-through", true);
+                  Bukkit.getMessenger().registerIncomingPluginChannel(this, STATS_CHANNEL, (channel, player, message) -> receiveStats(message));
+                  Bukkit.getMessenger().registerOutgoingPluginChannel(this, STATS_CHANNEL);
+                  Bukkit.getPluginManager().registerEvents(this, this);
+                  PluginCommand cmd=getCommand("hologram"); if(cmd!=null){ HologramCommand c=new HologramCommand(this); cmd.setExecutor(c); cmd.setTabCompleter(c); }
+                  removeOwnDisplays(); loadAll();
               }
 
-              @Subscribe
-              public void onProxyInitialization(ProxyInitializeEvent event) {
-                  proxy.getChannelRegistrar().register(TELEPORT_CHANNEL, STATS_CHANNEL);
-                  proxy.getCommandManager().register(proxy.getCommandManager().metaBuilder("blokadaLifeStealSMP").build(), new BlockadeCommand());
-                  proxy.getCommandManager().register(proxy.getCommandManager().metaBuilder("statusLifeStealSMP").build(), new StatusCommand());
-                  pingTarget();
-                  pingTask = proxy.getScheduler().buildTask(this, this::pingTarget).repeat(15, TimeUnit.SECONDS).schedule();
+              @Override public void onDisable(){ saveAll(); removeOwnDisplays(); Bukkit.getMessenger().unregisterIncomingPluginChannel(this, STATS_CHANNEL); Bukkit.getMessenger().unregisterOutgoingPluginChannel(this, STATS_CHANNEL); personal.clear(); }
+
+              @EventHandler public void join(PlayerJoinEvent e){
+                  Player p=e.getPlayer(); requestStats(p);
+                  for(var entry:holograms.entrySet()) if(entry.getValue().hasPlayerPlaceholder()) spawnPersonalFor(entry.getKey(),entry.getValue(),p);
+                  refreshDynamicTexts();
+              }
+              @EventHandler public void quit(PlayerQuitEvent e){ UUID u=e.getPlayer().getUniqueId(); for(var m:personal.values()) removeEntities(m.remove(u)); refreshDynamicTexts(); }
+
+              private void removeOwnDisplays(){ for(World w:Bukkit.getWorlds()) for(TextDisplay d:w.getEntitiesByClass(TextDisplay.class)) if(d.getPersistentDataContainer().has(idKey,PersistentDataType.INTEGER)) d.remove(); for(var m:personal.values()) for(var ids:m.values()) removeEntities(ids); personal.clear(); }
+              private void removeEntities(List<UUID> ids){ if(ids==null)return; for(UUID id:ids){Entity e=Bukkit.getEntity(id); if(e!=null)e.remove();} }
+
+              private void loadAll(){ holograms.clear(); dynamicIds.clear(); File root=new File(getDataFolder(),"hologramy"); File[] dirs=root.listFiles(File::isDirectory); if(dirs==null)return; for(File dir:dirs){ try{int id=Integer.parseInt(dir.getName()); HologramData d=HologramData.load(dir); if(d!=null&&!d.lines.isEmpty()){d.save(getDataFolder(),id); holograms.put(id,d); if(d.isDynamic())dynamicIds.add(id); spawnHologram(id,d);} }catch(NumberFormatException ignored){} } }
+
+              private void spawnHologram(int id,HologramData d){ if(d.hasPlayerPlaceholder()){personal.put(id,new HashMap<>()); for(Player p:Bukkit.getOnlinePlayers())spawnPersonalFor(id,d,p);} else spawnGlobal(id,d); }
+              private void spawnGlobal(int id,HologramData d){World w=Bukkit.getWorld(d.world);if(w==null)return;d.entityIds.clear();for(int i=0;i<d.lines.size();i++){TextDisplay x=spawnLine(w,d.x,d.y-i*spacing, d.z,render(d.lines.get(i),null,d),id,d.sizes.get(i));d.entityIds.add(x.getUniqueId());}d.save(getDataFolder(),id);}
+              private void spawnPersonalFor(int id,HologramData d,Player viewer){World w=Bukkit.getWorld(d.world);if(w==null)return;removePersonalFor(id,viewer.getUniqueId());List<UUID> ids=new ArrayList<>();for(int i=0;i<d.lines.size();i++){TextDisplay x=spawnLine(w,d.x,d.y-i*spacing,d.z,render(d.lines.get(i),viewer,d),id,d.sizes.get(i));ids.add(x.getUniqueId());for(Player o:Bukkit.getOnlinePlayers())if(!o.getUniqueId().equals(viewer.getUniqueId()))o.hideEntity(this,x);}personal.computeIfAbsent(id,k->new HashMap<>()).put(viewer.getUniqueId(),ids);}
+              private void removePersonalFor(int id,UUID u){Map<UUID,List<UUID>> m=personal.get(id);if(m!=null)removeEntities(m.remove(u));}
+
+              private TextDisplay spawnLine(World w,double x,double y,double z,String text,int id,double size){return w.spawn(new Location(w,x,y,z),TextDisplay.class,d->{d.text(legacy.deserialize(text));d.setBillboard(Display.Billboard.CENTER);d.setShadowed(shadow);d.setSeeThrough(seeThrough);d.setLineWidth(lineWidth);d.setPersistent(true);d.setTransformation(new Transformation(new Vector3f(),new AxisAngle4f(),new Vector3f((float)size,(float)size,(float)size),new AxisAngle4f()));d.getPersistentDataContainer().set(idKey,PersistentDataType.INTEGER,id);});}
+
+              private String render(String template,Player viewer,HologramData d){
+                  String s=template;
+                  s=s.replace("%player%",viewer==null?"":viewer.getName());
+                  s=s.replace("%online%",Bukkit.getOnlinePlayers().size()+"/"+Bukkit.getMaxPlayers());
+                  s=s.replace("%status_LifeStealSMP%", lifeStatus ? d.statusOn : d.statusOff);
+                  s=s.replace("%blokada_LifeStealSMP%", lifeBlockade ? d.blocked : d.open);
+                  s=s.replace("%online_LifeStealSMP%", formatOnline(d.onlinePeople, lifeOnline) + d.onlineSlash + formatOnline(d.onlinePlaces, lifeMax));
+                  s=s.replace("%online%", formatOnline(d.localPeople, Bukkit.getOnlinePlayers().size()) + d.localSlash + formatOnline(d.localPlaces, Bukkit.getMaxPlayers()));
+                  return s;
+              }
+              private String formatOnline(String template,int value){
+                  if(template==null||template.isEmpty()) return String.valueOf(value);
+                  java.util.regex.Matcher m=java.util.regex.Pattern.compile("(-?\\d+)(?!.*\\d)").matcher(template);
+                  if(m.find()) return template.substring(0,m.start())+value+template.substring(m.end());
+                  return template+value;
               }
 
-              @Subscribe
-              public void onPluginMessage(PluginMessageEvent event) {
-                  if (!TELEPORT_CHANNEL.equals(event.getIdentifier()) && !STATS_CHANNEL.equals(event.getIdentifier())) return;
-                  event.setResult(PluginMessageEvent.ForwardResult.handled());
-                  if (!(event.getSource() instanceof ServerConnection connection)) return;
-                  if (TELEPORT_CHANNEL.equals(event.getIdentifier())) handleTeleport(connection, event.getData());
-                  else handleStatsRequest(connection, event.getData());
-              }
+              private void requestStats(Player p){ByteArrayDataOutput out=ByteStreams.newDataOutput();out.writeUTF("REQUEST");p.sendPluginMessage(this,STATS_CHANNEL,out.toByteArray());}
+              private void receiveStats(byte[] data){try{ByteArrayDataInput in=ByteStreams.newDataInput(data);if(!"STATS".equals(in.readUTF()))return;lifeOnline=Math.max(0,in.readInt());lifeMax=Math.max(0,in.readInt());lifeStatus=in.readBoolean();lifeBlockade=in.readBoolean();refreshDynamicTexts();}catch(Exception ignored){}}
+              private void refreshDynamicTexts(){for(Integer id:new ArrayList<>(dynamicIds)){HologramData d=holograms.get(id);if(d!=null)refreshTexts(id,d);}}
+              private void refreshTexts(int id,HologramData d){if(d.hasPlayerPlaceholder()){Map<UUID,List<UUID>> m=personal.get(id);if(m==null)return;for(var en:m.entrySet()){Player p=Bukkit.getPlayer(en.getKey());if(p==null||!p.isOnline())continue;List<UUID> ids=en.getValue();for(int i=0;i<d.lines.size()&&i<ids.size();i++){Entity e=Bukkit.getEntity(ids.get(i));if(e instanceof TextDisplay t)t.text(legacy.deserialize(render(d.lines.get(i),p,d)));}}}else{for(int i=0;i<d.lines.size()&&i<d.entityIds.size();i++){Entity e=Bukkit.getEntity(d.entityIds.get(i));if(e instanceof TextDisplay t)t.text(legacy.deserialize(render(d.lines.get(i),null,d)));}}}
+              private void saveAll(){for(var e:holograms.entrySet())e.getValue().save(getDataFolder(),e.getKey());}
+              void reloadHolograms(){removeOwnDisplays();loadAll();}
+              Set<Integer> ids(){return new TreeSet<>(holograms.keySet());}
+              int count(int id){HologramData d=holograms.get(id);return d==null?0:d.lines.size();}
+              void info(Player p,int id){HologramData d=holograms.get(id);if(d==null){p.sendMessage(ChatColor.RED+"Nie ma hologramu o ID "+id+".");return;}p.sendMessage(ChatColor.WHITE+"Hologram "+id+": "+d.lines.size()+" linii");}
 
-              private void handleTeleport(ServerConnection connection, byte[] data) {
-                  ByteArrayDataInput in = ByteStreams.newDataInput(data);
-                  try {
-                      if (!"CHECK".equals(in.readUTF())) return;
-                      if (!TARGET_SERVER.equalsIgnoreCase(in.readUTF())) return;
-                  } catch (Exception ignored) { return; }
+              void create(Player p){int id=nextId();Location l=p.getLocation();double x=Math.floor(l.getX())+.5,y=Math.floor(l.getY()),z=Math.floor(l.getZ())+.5;HologramData d=new HologramData();d.world=l.getWorld().getName();d.x=x;d.y=y;d.z=z;d.lines.add("&fID: "+id);d.sizes.add(1.0D);d.save(getDataFolder(),id);holograms.put(id,d);spawnHologram(id,d);refreshDynamicIndex(id,d);p.sendMessage(ChatColor.GREEN+"Utworzono hologram ID: "+id);}
+              private int nextId(){int id=1;while(holograms.containsKey(id)||new File(getDataFolder(),"hologramy/"+id).exists())id++;return id;}
+              void move(Player p,int id){HologramData d=holograms.get(id);if(d==null){p.sendMessage(ChatColor.RED+"Nie ma hologramu o ID "+id+".");return;}Location l=p.getLocation();d.world=l.getWorld().getName();d.x=Math.floor(l.getX())+.5;d.y=Math.floor(l.getY());d.z=Math.floor(l.getZ())+.5;respawn(id,d);p.sendMessage(ChatColor.GREEN+"Przesunięto hologram "+id+".");}
+              void rename(Player p,int id,int line,String text){HologramData d=holograms.get(id);if(!validLine(p,d,line))return;d.lines.set(line,text);respawn(id,d);}
+              void addLine(Player p,int id,String text){HologramData d=holograms.get(id);if(d==null){p.sendMessage(ChatColor.RED+"Nie ma hologramu o ID "+id+".");return;}d.lines.add(text);d.sizes.add(1.0D);respawn(id,d);}
+              void removeLine(Player p,int id,int line){HologramData d=holograms.get(id);if(!validLine(p,d,line))return;if(d.lines.size()==1){p.sendMessage(ChatColor.RED+"Hologram musi mieć co najmniej jedną linię.");return;}d.lines.remove(line);if(line<d.sizes.size())d.sizes.remove(line);respawn(id,d);}
+              private boolean validLine(Player p,HologramData d,int line){if(d==null){p.sendMessage(ChatColor.RED+"Nie ma takiego hologramu.");return false;}if(line<0||line>=d.lines.size()){p.sendMessage(ChatColor.RED+"Nie ma takiej linii.");return false;}return true;}
+              private void respawn(int id,HologramData d){removeHologramDisplays(id);refreshDynamicIndex(id,d);spawnHologram(id,d);d.save(getDataFolder(),id);}
+              private void refreshDynamicIndex(int id,HologramData d){if(d.isDynamic())dynamicIds.add(id);else dynamicIds.remove(id);}
+              private void removeHologramDisplays(int id){HologramData d=holograms.get(id);if(d!=null)for(UUID u:d.entityIds){Entity e=Bukkit.getEntity(u);if(e!=null)e.remove();}Map<UUID,List<UUID>> m=personal.remove(id);if(m!=null)for(List<UUID> u:m.values())removeEntities(u);}
+              void delete(Player p,int id){if(!holograms.containsKey(id)){p.sendMessage(ChatColor.RED+"Nie ma hologramu o ID "+id+".");return;}removeHologramDisplays(id);holograms.remove(id);dynamicIds.remove(id);File dir=new File(getDataFolder(),"hologramy/"+id);deleteDir(dir);p.sendMessage(ChatColor.GREEN+"Usunięto hologram "+id+".");}
+              private void deleteDir(File f){if(!f.exists())return;File[] fs=f.listFiles();if(fs!=null)for(File x:fs)deleteDir(x);f.delete();}
 
-                  Player player = connection.getPlayer();
-                  if (blockade) {
-                      player.sendMessage(Component.text("LifeStealSMP jest aktualnie zablokowany.", NamedTextColor.RED));
-                      return;
+              private static final class HologramData {
+                  String world="world"; double x,y,z; List<String> lines=new ArrayList<>(); List<UUID> entityIds=new ArrayList<>();
+                  String statusOn="&aWłączony", statusOff="&4Wyłączony", open="&aOtwarty", blocked="&4Zablokowany";
+                  String onlinePeople="&f0", onlineSlash="&f/", onlinePlaces="&f20";
+                  String localPeople="&f0", localSlash="&f/", localPlaces="&f20";
+                  List<Double> sizes=new ArrayList<>();
+                  boolean hasPlayerPlaceholder(){for(String s:lines)if(s.contains("%player%"))return true;return false;}
+                  boolean isDynamic(){for(String s:lines)if(s.contains("%player%")||s.contains("%online%")||s.contains("%online_LifeStealSMP%")||s.contains("%status_LifeStealSMP%")||s.contains("%blokada_LifeStealSMP%"))return true;return false;}
+                  static HologramData load(File dir){File file=new File(dir,"data.yml");if(!file.exists())return null;YamlConfiguration c=YamlConfiguration.loadConfiguration(file);HologramData d=new HologramData();d.world=c.getString("world","world");d.x=c.getDouble("x");d.y=c.getDouble("y");d.z=c.getDouble("z");
+                      if(c.isList("lines")){List<?> raw=c.getList("lines");if(raw!=null){for(Object item:raw){if(item instanceof Map<?,?> m){Object t=m.get("text");if(t!=null){d.lines.add(String.valueOf(t));d.sizes.add(size(m.get("size")));}}else if(item!=null){d.lines.add(String.valueOf(item));d.sizes.add(1.0D);}}}}
+                      else {ConfigurationSection sec=c.getConfigurationSection("lines");if(sec!=null){for(String k:sec.getKeys(false)){d.lines.add(sec.getString(k+".text",sec.getString(k,"")));d.sizes.add(size(sec.get(k+".size")));}}}
+                      d.statusOn=c.getString("placeholders.%status_LifeStealSMP%.włączony","&aWłączony");d.statusOff=c.getString("placeholders.%status_LifeStealSMP%.wyłączony","&4Wyłączony");
+                      d.open=c.getString("placeholders.%blokada_LifeStealSMP%.otwarty","&aOtwarty");d.blocked=c.getString("placeholders.%blokada_LifeStealSMP%.zablokowany",c.getString("placeholders.%blokada_LifeStealSMP%.zamkniety","&4Zablokowany"));
+                      d.onlinePeople=c.getString("placeholders.%online_LifeStealSMP%.osoby","&f0");d.onlineSlash=c.getString("placeholders.%online_LifeStealSMP%.ukośnik","&f/");d.onlinePlaces=c.getString("placeholders.%online_LifeStealSMP%.miejsce","&f20");
+                      d.localPeople=c.getString("placeholders.%online%.osoby","&f0");d.localSlash=c.getString("placeholders.%online%.ukośnik","&f/");d.localPlaces=c.getString("placeholders.%online%.miejsce","&f20");
+                      d.ensureSizes();d.normalizePlaceholderSettings();return d;}
+                  static double size(Object v){try{double x=Double.parseDouble(String.valueOf(v));return x>0?x:1.0D;}catch(Exception e){return 1.0D;}}
+                  static String mode(YamlConfiguration c,String key,String legacyKey){String v=c.getString(key,null);if(v==null)v=c.getString(legacyKey,"y");return "e".equalsIgnoreCase(v)?"e":"y";}
+                  void ensureSizes(){while(sizes.size()<lines.size())sizes.add(1.0D);while(sizes.size()>lines.size())sizes.remove(sizes.size()-1);}
+                  void normalizePlaceholderSettings(){
+                      statusOn=validText(statusOn,"&aWłączony");statusOff=validText(statusOff,"&4Wyłączony");open=validText(open,"&aOtwarty");blocked=validText(blocked,"&4Zablokowany");
+                      onlinePeople=validText(onlinePeople,"&f0");onlineSlash=validText(onlineSlash,"&f/");onlinePlaces=validText(onlinePlaces,"&f20");
+                      localPeople=validText(localPeople,"&f0");localSlash=validText(localSlash,"&f/");localPlaces=validText(localPlaces,"&f20");
                   }
-                  Optional<RegisteredServer> optional = proxy.getServer(TARGET_SERVER);
-                  if (optional.isEmpty() || !lifeStealReachable) {
-                      player.sendMessage(Component.text("LifeStealSMP jest aktualnie wyłączony.", NamedTextColor.RED));
-                      return;
-                  }
-                  RegisteredServer server = optional.get();
-                  player.createConnectionRequest(server).connect().thenAccept(result -> {
-                      if (!result.isSuccessful() && player.isActive()) {
-                          player.sendMessage(Component.text("Nie udało się połączyć z LifeStealSMP.", NamedTextColor.RED));
-                      }
-                  }).exceptionally(error -> {
-                      if (player.isActive()) player.sendMessage(Component.text("Nie udało się połączyć z LifeStealSMP.", NamedTextColor.RED));
-                      return null;
-                  });
+                  static String validText(String v,String def){return v==null||v.isBlank()?def:v;}
+                  void save(File root,int id){File dir=new File(root,"hologramy/"+id);dir.mkdirs();YamlConfiguration c=new YamlConfiguration();c.set("world",world);c.set("x",x);c.set("y",y);c.set("z",z);ensureSizes();normalizePlaceholderSettings();List<Map<String,Object>> out=new ArrayList<>();for(int i=0;i<lines.size();i++){Map<String,Object> m=new LinkedHashMap<>();m.put("text",lines.get(i));m.put("size",sizes.get(i));out.add(m);}c.set("lines",out);
+                      boolean hasStatus=lines.stream().anyMatch(x->x.contains("%status_LifeStealSMP%"));boolean hasBlock=lines.stream().anyMatch(x->x.contains("%blokada_LifeStealSMP%"));boolean hasOnline=lines.stream().anyMatch(x->x.contains("%online_LifeStealSMP%"));boolean hasLocalOnline=lines.stream().anyMatch(x->x.contains("%online%"));
+                      if(hasStatus){c.set("placeholders.%status_LifeStealSMP%.włączony",statusOn);c.set("placeholders.%status_LifeStealSMP%.wyłączony",statusOff);}else c.set("placeholders.%status_LifeStealSMP%",null);
+                      if(hasBlock){c.set("placeholders.%blokada_LifeStealSMP%.otwarty",open);c.set("placeholders.%blokada_LifeStealSMP%.zablokowany",blocked);}else c.set("placeholders.%blokada_LifeStealSMP%",null);
+                      if(hasOnline){c.set("placeholders.%online_LifeStealSMP%.osoby",onlinePeople);c.set("placeholders.%online_LifeStealSMP%.ukośnik",onlineSlash);c.set("placeholders.%online_LifeStealSMP%.miejsce",onlinePlaces);}else c.set("placeholders.%online_LifeStealSMP%",null);
+                      if(hasLocalOnline){c.set("placeholders.%online%.osoby",localPeople);c.set("placeholders.%online%.ukośnik",localSlash);c.set("placeholders.%online%.miejsce",localPlaces);}else c.set("placeholders.%online%",null);
+                      try{c.save(new File(dir,"data.yml"));}catch(IOException ignored){}}
+                  String norm(String v){return "e".equalsIgnoreCase(v)?"e":"y";}
               }
 
-              private void handleStatsRequest(ServerConnection connection, byte[] data) {
-                  try {
-                      if (!"REQUEST".equals(ByteStreams.newDataInput(data).readUTF())) return;
-                  } catch (Exception ignored) { return; }
-                  sendStats(connection);
-              }
-
-              @Subscribe
-              public void onServerPostConnect(ServerPostConnectEvent event) {
-                  RegisteredServer current = event.getPlayer().getCurrentServer().map(ServerConnection::getServer).orElse(null);
-                  RegisteredServer previous = event.getPreviousServer();
-                  if (current != null && isTarget(current)) updateOnlineFromConnection(current);
-                  if (previous != null && isTarget(previous)) updateOnlineFromConnection(previous);
-              }
-
-              @Subscribe
-              public void onDisconnect(DisconnectEvent event) {
-                  RegisteredServer current = event.getPlayer().getCurrentServer().map(ServerConnection::getServer).orElse(null);
-                  if (current != null && isTarget(current)) updateOnlineFromConnection(current);
-              }
-
-              private void updateOnlineFromConnection(RegisteredServer server) {
-                  int next = Math.max(0, server.getPlayersConnected().size());
-                  if (next != lifeStealOnline) {
-                      lifeStealOnline = next;
-                      broadcastStats();
-                  }
-              }
-
-              private void pingTarget() {
-                  Optional<RegisteredServer> optional = proxy.getServer(TARGET_SERVER);
-                  if (optional.isEmpty()) {
-                      applyPingState(false, 0);
-                      return;
-                  }
-                  RegisteredServer server = optional.get();
-                  server.ping().whenComplete((ping, error) -> {
-                      if (error != null || ping == null) {
-                          applyPingState(false, 0);
-                          return;
-                      }
-                      int max = ping.getPlayers().map(ServerPing.Players::getMax).orElse(lifeStealMax);
-                      int online = Math.max(0, server.getPlayersConnected().size());
-                      boolean changed = !lifeStealReachable || lifeStealMax != max || lifeStealOnline != online;
-                      lifeStealReachable = true;
-                      lifeStealMax = Math.max(0, max);
-                      lifeStealOnline = online;
-                      if (changed) broadcastStats();
-                  });
-              }
-
-              private void applyPingState(boolean reachable, int max) {
-                  boolean changed = lifeStealReachable || lifeStealMax != max || lifeStealOnline != 0;
-                  lifeStealReachable = reachable;
-                  lifeStealMax = Math.max(0, max);
-                  lifeStealOnline = 0;
-                  if (changed) broadcastStats();
-              }
-
-              private boolean isTarget(RegisteredServer server) {
-                  return TARGET_SERVER.equalsIgnoreCase(server.getServerInfo().getName());
-              }
-
-              private void sendStats(ServerConnection connection) {
-                  ByteArrayDataOutput out = ByteStreams.newDataOutput();
-                  out.writeUTF("STATS");
-                  out.writeInt(Math.max(0, lifeStealOnline));
-                  out.writeInt(Math.max(0, lifeStealMax));
-                  out.writeBoolean(lifeStealReachable);
-                  out.writeBoolean(blockade);
-                  connection.sendPluginMessage(STATS_CHANNEL, out.toByteArray());
-              }
-
-              private void broadcastStats() {
-                  for (String hubName : HUBS) {
-                      Optional<RegisteredServer> hub = proxy.getServer(hubName);
-                      if (hub.isEmpty()) continue;
-                      for (Player player : hub.get().getPlayersConnected()) {
-                          ServerConnection connection = player.getCurrentServer().orElse(null);
-                          if (connection != null && hubName.equalsIgnoreCase(connection.getServer().getServerInfo().getName())) {
-                              sendStats(connection);
-                          }
-                      }
-                  }
-              }
-
-              private void loadConfig() {
-                  try {
-                      Files.createDirectories(dataDirectory);
-                      Path file = dataDirectory.resolve("config.properties");
-                      Properties p = new Properties();
-                      if (Files.exists(file)) {
-                          try (var reader = Files.newBufferedReader(file)) { p.load(reader); }
-                      }
-                      blockade = Boolean.parseBoolean(p.getProperty("blockade", "false"));
-                  } catch (IOException ignored) {
-                      blockade = false;
-                  }
-              }
-
-              private void saveConfig() {
-                  try {
-                      Files.createDirectories(dataDirectory);
-                      Path file = dataDirectory.resolve("config.properties");
-                      Properties p = new Properties();
-                      p.setProperty("blockade", Boolean.toString(blockade));
-                      try (var writer = Files.newBufferedWriter(file)) { p.store(writer, "ServerTeleport"); }
-                  } catch (IOException ignored) { }
-              }
-
-              private final class BlockadeCommand implements SimpleCommand {
-                  @Override public void execute(Invocation invocation) {
-                      String[] args = invocation.arguments();
-                      if (args.length != 1 || (!args[0].equalsIgnoreCase("on") && !args[0].equalsIgnoreCase("off"))) {
-                          invocation.source().sendMessage(Component.text("Użycie: /blokadaLifeStealSMP on|off", NamedTextColor.RED));
-                          return;
-                      }
-                      boolean next = args[0].equalsIgnoreCase("on");
-                      if (next != blockade) {
-                          blockade = next;
-                          saveConfig();
-                          broadcastStats();
-                      }
-                      invocation.source().sendMessage(Component.text("LifeStealSMP: " + (blockade ? "ZABLOKOWANY" : "ODBLOKOWANY"), blockade ? NamedTextColor.RED : NamedTextColor.GREEN));
-                  }
-                  @Override public List<String> suggest(Invocation invocation) {
-                      return List.of("on", "off");
-                  }
-              }
-
-              private final class StatusCommand implements SimpleCommand {
-                  @Override public void execute(Invocation invocation) {
-                      pingTarget();
-                      invocation.source().sendMessage(Component.text("LifeStealSMP: " + (lifeStealReachable ? "URUCHOMIONY" : "WYŁĄCZONY") + " | " + lifeStealOnline + "/" + lifeStealMax,
-                              lifeStealReachable ? NamedTextColor.GREEN : NamedTextColor.RED));
-                  }
+              private final class HologramCommand implements CommandExecutor,TabCompleter {
+                  private final HologramPlugin plugin; HologramCommand(HologramPlugin p){plugin=p;}
+                  @Override public boolean onCommand(CommandSender sender,Command cmd,String label,String[] a){if(!(sender instanceof Player p)){sender.sendMessage("Tylko gracz.");return true;}if(a.length==0){help(p);return true;}if(a[0].equalsIgnoreCase("stworz")||a[0].equalsIgnoreCase("stwor")||a[0].equalsIgnoreCase("stwórz")){plugin.create(p);return true;}if(a[0].equalsIgnoreCase("reload")){plugin.reloadHolograms();p.sendMessage(ChatColor.GREEN+"Przeładowano hologramy.");return true;}if(a[0].equalsIgnoreCase("help")){help(p);return true;}if(a[0].equalsIgnoreCase("list")){if(a.length==1)p.sendMessage(ChatColor.WHITE+"Liczba hologramów: "+plugin.ids().size());else{Integer id=integer(a[1]);if(id!=null)p.sendMessage(ChatColor.WHITE+"Hologram "+id+": "+plugin.count(id)+" linii");}return true;}if(a[0].equalsIgnoreCase("usun")||a[0].equalsIgnoreCase("usuń")){if(a.length>=2){Integer id=integer(a[1]);if(id!=null&&a.length==2){plugin.delete(p,id);return true;}if(a.length>=4&&a[2].equalsIgnoreCase("linijka")){Integer line=integer(a[3]);if(line!=null)plugin.removeLine(p,id,line);return true;}}help(p);return true;}if(a[0].equalsIgnoreCase("wybierz")&&a.length>=3){Integer id=integer(a[1]);if(id==null){help(p);return true;}if(a[2].equalsIgnoreCase("przesun")){plugin.move(p,id);return true;}if(a[2].equalsIgnoreCase("dodaj_linijke")&&a.length>=4){plugin.addLine(p,id,join(a,3));return true;}if(a[2].equalsIgnoreCase("zmien_nazwe")&&a.length>=5){Integer line=integer(a[3]);if(line!=null)plugin.rename(p,id,line,join(a,4));return true;}if(a[2].equalsIgnoreCase("usun")&&a.length>=4){Integer line=integer(a[3]);if(line!=null)plugin.removeLine(p,id,line);return true;}}Integer id=integer(a[0]);if(id!=null&&a.length==1){plugin.info(p,id);return true;}help(p);return true;}
+                  private void help(Player p){p.sendMessage(ChatColor.WHITE+"===== HologramPlugin =====");p.sendMessage("/hologram stworz");p.sendMessage("/hologram wybierz <id> przesun");p.sendMessage("/hologram wybierz <id> dodaj_linijke <tekst>");p.sendMessage("/hologram wybierz <id> zmien_nazwe <linia> <tekst>");p.sendMessage("/hologram wybierz <id> usun <linia>");p.sendMessage("/hologram usun <id>");p.sendMessage("/hologram list [id]");p.sendMessage("/hologram reload");p.sendMessage("%player%, %online%, %online_LifeStealSMP%, %status_LifeStealSMP%, %blokada_LifeStealSMP%");}
+                  @Override public List<String> onTabComplete(CommandSender s,Command c,String a,String[] args){if(args.length==1)return filter(List.of("stworz","wybierz","usun","reload","list","help"),args[0]);if(args.length==2&&(args[0].equalsIgnoreCase("wybierz")||args[0].equalsIgnoreCase("usun")||args[0].equalsIgnoreCase("list")))return filter(plugin.ids().stream().map(String::valueOf).toList(),args[1]);if(args.length==3&&args[0].equalsIgnoreCase("wybierz"))return filter(List.of("przesun","zmien_nazwe","dodaj_linijke","usun"),args[2]);if(args.length==4&&args[0].equalsIgnoreCase("wybierz")&&(args[2].equalsIgnoreCase("zmien_nazwe")||args[2].equalsIgnoreCase("usun"))){Integer id=integer(args[1]);if(id==null)return List.of();return filter(lines(id),args[3]);}return List.of();}
+                  private List<String> lines(int id){List<String> l=new ArrayList<>();for(int i=0;i<plugin.count(id);i++)l.add(String.valueOf(i));return l;}private List<String> filter(List<String> v,String in){String q=in.toLowerCase(Locale.ROOT);return v.stream().filter(x->x.toLowerCase(Locale.ROOT).startsWith(q)).toList();}private Integer integer(String x){try{return Integer.parseInt(x);}catch(Exception e){return null;}}private String join(String[] a,int s){StringBuilder b=new StringBuilder();for(int i=s;i<a.length;i++){if(i>s)b.append(' ');b.append(a[i]);}return b.toString();}
               }
           }
           JAVA
 
       - name: Build
         run: mvn -B package --no-transfer-progress
-
       - name: Prepare ZIP
         run: |
           mkdir -p release
-          cp target/ServerTeleport-Velocity-1.5.0.jar release/ServerTeleport-Velocity.jar
+          cp target/HologramPlugin-1.6.0.jar release/HologramPlugin.jar
           cd release
-          zip -9 ../ServerTeleport-Velocity-OPTIMIZED.zip ServerTeleport-Velocity.jar
-
+          zip -9 ../HologramPlugin-OPTIMIZED-v1.6.0.zip HologramPlugin.jar
       - uses: actions/upload-artifact@v4
         with:
-          name: ServerTeleport-Velocity-OPTIMIZED
-          path: ServerTeleport-Velocity-OPTIMIZED.zip
+          name: HologramPlugin-OPTIMIZED-v1.6.0
+          path: HologramPlugin-OPTIMIZED-v1.6.0.zip
           if-no-files-found: error
