@@ -30,7 +30,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: maven
 
 
       # =========================================================
@@ -147,7 +146,9 @@ jobs:
           import java.util.Set;
           import java.util.UUID;
 
-          public final class ServerTeleport extends JavaPlugin implements Listener {
+          public final class ServerTeleport
+                  extends JavaPlugin
+                  implements Listener {
 
               private static final String CHANNEL =
                       "serverteleport:main";
@@ -246,12 +247,13 @@ jobs:
               public void onMove(PlayerMoveEvent event) {
 
                   /*
-                   * Najważniejsza optymalizacja:
-                   * obrót kamerą bez zmiany bloku kończy event natychmiast.
+                   * Maksymalna optymalizacja:
+                   * samo obracanie kamerą kończy event natychmiast.
                    */
                   if (!event.hasChangedBlock()) {
                       return;
                   }
+
 
                   final Player player =
                           event.getPlayer();
@@ -270,7 +272,11 @@ jobs:
 
 
                   /*
-                   * Sprawdzenie regionu portalu.
+                   * Region portalu:
+                   *
+                   * X: -4 do 4
+                   * Y: 68 do 77
+                   * Z: 9
                    */
                   if (
                           x < minX ||
@@ -289,7 +295,7 @@ jobs:
 
 
                   /*
-                   * Opcjonalne wymaganie powietrza.
+                   * Opcjonalne sprawdzanie powietrza.
                    */
                   if (
                           requireAir &&
@@ -302,8 +308,7 @@ jobs:
 
 
                   /*
-                   * Tylko jedno wywołanie przy wejściu
-                   * do regionu.
+                   * Jedno wywołanie na wejście.
                    */
                   if (
                           oncePerEntry &&
@@ -338,7 +343,6 @@ jobs:
                           ByteStreams.newDataOutput();
 
                   output.writeUTF("CHECK");
-
                   output.writeUTF(targetServer);
 
                   player.sendPluginMessage(
@@ -495,10 +499,10 @@ jobs:
 
 
               /*
-               * true = zablokowane
-               * false = odblokowane
+               * false = odblokowany
+               * true  = zablokowany
                *
-               * Domyślnie odblokowane.
+               * Domyślnie LifeStealSMP jest odblokowany.
                */
               private volatile boolean blockade = false;
 
@@ -526,7 +530,7 @@ jobs:
                                           "blokadaLifeStealSMP"
                                   )
                                   .build(),
-                          new BlockCommand()
+                          new BlockadeCommand()
                   );
 
 
@@ -565,7 +569,7 @@ jobs:
 
                   /*
                    * Wiadomość musi pochodzić
-                   * z połączenia backend -> Velocity.
+                   * z backendu Paper.
                    */
                   if (!(event.getSource()
                           instanceof ServerConnection connection)) {
@@ -621,7 +625,9 @@ jobs:
 
 
                   /*
+                   * =================================================
                    * BLOKADA
+                   * =================================================
                    */
                   if (blockade) {
 
@@ -638,7 +644,9 @@ jobs:
 
 
                   /*
-                   * Szukanie serwera.
+                   * =================================================
+                   * SPRAWDZENIE SERWERA
+                   * =================================================
                    */
                   final Optional<RegisteredServer> optional =
                           proxy.getServer(TARGET_SERVER);
@@ -663,10 +671,9 @@ jobs:
 
 
                   /*
-                   * Ping tylko wtedy, kiedy gracz
-                   * faktycznie użył portalu.
+                   * Ping tylko podczas użycia portalu.
                    *
-                   * Brak żadnego ciągłego pingowania.
+                   * Brak ciągłego pingowania.
                    */
                   target.ping().whenComplete(
                           (ping, error) -> {
@@ -694,8 +701,8 @@ jobs:
 
 
                               /*
-                               * Ponowna kontrola blokady
-                               * przed połączeniem.
+                               * Druga kontrola blokady
+                               * tuż przed połączeniem.
                                */
                               if (blockade) {
 
@@ -756,8 +763,11 @@ jobs:
                * =====================================================
                * /blokadaLifeStealSMP
                * =====================================================
+               *
+               * ON  = ZABLOKOWANY
+               * OFF = ODBLOKOWANY
                */
-              private final class BlockCommand
+              private final class BlockadeCommand
                       implements SimpleCommand {
 
                   @Override
@@ -773,7 +783,7 @@ jobs:
 
                           invocation.source().sendMessage(
                                   Component.text(
-                                          "/blokadaLifeStealSMP on/off"
+                                          "Użycie: /blokadaLifeStealSMP on/off"
                                   )
                           );
 
@@ -821,7 +831,7 @@ jobs:
 
                       invocation.source().sendMessage(
                               Component.text(
-                                      "/blokadaLifeStealSMP on/off"
+                                      "Użycie: /blokadaLifeStealSMP on/off"
                               )
                       );
                   }
@@ -854,8 +864,7 @@ jobs:
 
 
                       /*
-                       * Stary styl:
-                       * §8§m----------------------------
+                       * Linia dekoracyjna.
                        */
                       invocation.source().sendMessage(
                               Component.text(
@@ -867,7 +876,7 @@ jobs:
 
 
                       /*
-                       * §eLifeStealSMP
+                       * Nazwa.
                        */
                       invocation.source().sendMessage(
                               Component.text(
@@ -879,7 +888,7 @@ jobs:
 
 
                       /*
-                       * §7Blokada:
+                       * Blokada.
                        */
                       invocation.source().sendMessage(
                               Component.text(
@@ -897,7 +906,7 @@ jobs:
 
 
                       /*
-                       * Sprawdzamy serwer.
+                       * Czy serwer istnieje.
                        */
                       final Optional<RegisteredServer> optional =
                               proxy.getServer(
@@ -935,7 +944,7 @@ jobs:
 
 
                       /*
-                       * Ping tylko po wpisaniu statusu.
+                       * Ping tylko przy użyciu komendy status.
                        */
                       optional.get().ping().whenComplete(
                               (ping, error) -> {
@@ -980,7 +989,7 @@ jobs:
 
 
       # =========================================================
-      # PREPARE JARS
+      # PREPARE RELEASE
       # =========================================================
 
       - name: Prepare release
@@ -1000,7 +1009,7 @@ jobs:
 
 
       # =========================================================
-      # ONE ZIP
+      # CREATE ONE ZIP
       # =========================================================
 
       - name: Create ZIP
