@@ -37,7 +37,7 @@ jobs:
 
               <groupId>pl.reniferek</groupId>
               <artifactId>Hub2Protection</artifactId>
-              <version>1.4.0</version>
+              <version>1.5.0</version>
 
               <properties>
                   <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -62,6 +62,7 @@ jobs:
 
               <build>
                   <plugins>
+
                       <plugin>
                           <groupId>org.apache.maven.plugins</groupId>
                           <artifactId>maven-compiler-plugin</artifactId>
@@ -76,6 +77,7 @@ jobs:
                           <artifactId>maven-jar-plugin</artifactId>
                           <version>3.4.2</version>
                       </plugin>
+
                   </plugins>
               </build>
 
@@ -84,23 +86,24 @@ jobs:
 
           cat > src/main/resources/plugin.yml <<'EOF'
           name: Hub2Protection
-          version: 1.4.0
+          version: 1.5.0
           main: pl.reniferek.hub2protection.Hub2Protection
           api-version: '1.21'
           author: Reniferek
-          description: Bardzo lekka ochrona serwera Hub2.
+          description: Lightweight Hub2 protection
           EOF
 
           cat > src/main/resources/config.yml <<'EOF'
-          hunger: true
-          hearts: true
+          # ==========================================
+          # Hub2Protection
+          # ==========================================
+
+          # TRYB GRY PRZY WEJŚCIU
+          # Dostępne: adventure, survival, creative, spectator
+          gamemode: adventure
+
+          # TELEPORTACJA PRZY WEJŚCIU
           teleport-on-join: true
-
-          void-teleport: true
-          void-y: -10
-
-          adventure-on-join: true
-          block-beds: true
 
           spawn:
             x: 0.5
@@ -108,6 +111,33 @@ jobs:
             z: -20.5
             yaw: 0.0
             pitch: 0.0
+
+          # ==========================================
+          # OCHRONA
+          # ==========================================
+
+          # Brak tracenia głodu
+          hunger: true
+
+          # Brak otrzymywania obrażeń
+          damage: true
+
+          # ==========================================
+          # ŁÓŻKA
+          # ==========================================
+
+          # Całkowita blokada używania łóżek
+          block-beds: true
+
+          # ==========================================
+          # VOID
+          # ==========================================
+
+          # Teleportacja po wpadnięciu do voida
+          void-teleport: true
+
+          # Poziom Y, przy którym następuje teleport
+          void-y: -10.0
           EOF
 
           cat > src/main/java/pl/reniferek/hub2protection/Hub2Protection.java <<'EOF'
@@ -130,16 +160,17 @@ jobs:
           import org.bukkit.event.player.PlayerMoveEvent;
           import org.bukkit.plugin.java.JavaPlugin;
 
+          import java.util.Locale;
+
           public final class Hub2Protection extends JavaPlugin implements Listener {
 
-              private boolean noHunger;
-              private boolean noDamage;
-              private boolean teleportOnJoin;
-              private boolean voidTeleport;
-              private boolean adventureOnJoin;
-              private boolean blockBeds;
+              private GameMode joinGameMode;
 
-              private double voidY;
+              private boolean teleportOnJoin;
+              private boolean hungerProtection;
+              private boolean damageProtection;
+              private boolean blockBeds;
+              private boolean voidTeleport;
 
               private double spawnX;
               private double spawnY;
@@ -148,24 +179,46 @@ jobs:
               private float spawnYaw;
               private float spawnPitch;
 
+              private double voidY;
+
               @Override
               public void onEnable() {
 
                   saveDefaultConfig();
 
-                  noHunger = getConfig().getBoolean("hunger", true);
-                  noDamage = getConfig().getBoolean("hearts", true);
-                  teleportOnJoin = getConfig().getBoolean("teleport-on-join", true);
-                  voidTeleport = getConfig().getBoolean("void-teleport", true);
+                  loadSettings();
 
-                  adventureOnJoin =
-                          getConfig().getBoolean("adventure-on-join", true);
+                  getServer()
+                          .getPluginManager()
+                          .registerEvents(this, this);
+              }
+
+              private void loadSettings() {
+
+                  String mode = getConfig()
+                          .getString("gamemode", "adventure")
+                          .toLowerCase(Locale.ROOT);
+
+                  try {
+                      joinGameMode = GameMode.valueOf(mode.toUpperCase(Locale.ROOT));
+                  } catch (IllegalArgumentException exception) {
+                      joinGameMode = GameMode.ADVENTURE;
+                  }
+
+                  teleportOnJoin =
+                          getConfig().getBoolean("teleport-on-join", true);
+
+                  hungerProtection =
+                          getConfig().getBoolean("hunger", true);
+
+                  damageProtection =
+                          getConfig().getBoolean("damage", true);
 
                   blockBeds =
                           getConfig().getBoolean("block-beds", true);
 
-                  voidY =
-                          getConfig().getDouble("void-y", -10.0);
+                  voidTeleport =
+                          getConfig().getBoolean("void-teleport", true);
 
                   spawnX =
                           getConfig().getDouble("spawn.x", 0.5);
@@ -182,39 +235,8 @@ jobs:
                   spawnPitch =
                           (float) getConfig().getDouble("spawn.pitch", 0.0);
 
-                  getServer()
-                          .getPluginManager()
-                          .registerEvents(this, this);
-              }
-
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onFood(FoodLevelChangeEvent event) {
-
-                  if (!noHunger) {
-                      return;
-                  }
-
-                  if (event.getEntity() instanceof Player) {
-                      event.setCancelled(true);
-                  }
-              }
-
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onDamage(EntityDamageEvent event) {
-
-                  if (!noDamage) {
-                      return;
-                  }
-
-                  if (event.getEntity() instanceof Player) {
-                      event.setCancelled(true);
-                  }
+                  voidY =
+                          getConfig().getDouble("void-y", -10.0);
               }
 
               @EventHandler(priority = EventPriority.HIGHEST)
@@ -222,10 +244,8 @@ jobs:
 
                   Player player = event.getPlayer();
 
-                  if (adventureOnJoin &&
-                      player.getGameMode() != GameMode.ADVENTURE) {
-
-                      player.setGameMode(GameMode.ADVENTURE);
+                  if (player.getGameMode() != joinGameMode) {
+                      player.setGameMode(joinGameMode);
                   }
 
                   if (teleportOnJoin) {
@@ -237,9 +257,28 @@ jobs:
                       priority = EventPriority.HIGHEST,
                       ignoreCancelled = true
               )
-              public void onBedEnter(PlayerBedEnterEvent event) {
+              public void onDamage(EntityDamageEvent event) {
 
-                  if (blockBeds) {
+                  if (!damageProtection) {
+                      return;
+                  }
+
+                  if (event.getEntity() instanceof Player) {
+                      event.setCancelled(true);
+                  }
+              }
+
+              @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
+              public void onFood(FoodLevelChangeEvent event) {
+
+                  if (!hungerProtection) {
+                      return;
+                  }
+
+                  if (event.getEntity() instanceof Player) {
                       event.setCancelled(true);
                   }
               }
@@ -275,6 +314,17 @@ jobs:
               }
 
               @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
+              public void onBedEnter(PlayerBedEnterEvent event) {
+
+                  if (blockBeds) {
+                      event.setCancelled(true);
+                  }
+              }
+
+              @EventHandler(
                       priority = EventPriority.MONITOR,
                       ignoreCancelled = true
               )
@@ -284,6 +334,10 @@ jobs:
                       return;
                   }
 
+                  /*
+                   * Obrót kamerą bez zmiany bloku:
+                   * natychmiast kończymy obsługę.
+                   */
                   if (!event.hasChangedBlock()) {
                       return;
                   }
@@ -316,16 +370,19 @@ jobs:
           EOF
 
       - name: Build
+        shell: bash
         run: |
+          set -e
           mvn -B package --no-transfer-progress
 
       - name: Prepare ZIP
+        shell: bash
         run: |
           set -e
 
           mkdir -p release
 
-          cp target/Hub2Protection-1.4.0.jar \
+          cp target/Hub2Protection-1.5.0.jar \
              release/Hub2Protection.jar
 
           cd release
@@ -333,7 +390,7 @@ jobs:
           zip -9 ../Hub2Protection.zip \
               Hub2Protection.jar
 
-      - name: Upload
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Hub2Protection
