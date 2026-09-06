@@ -1,4 +1,4 @@
-name: Build Hub2Protection
+name: Build AdventureOnly
 
 on:
   workflow_dispatch:
@@ -23,12 +23,11 @@ jobs:
         run: |
           set -e
 
-          mkdir -p src/main/java/pl/reniferek/hub2protection
+          mkdir -p src/main/java/pl/reniferek/adventureonly
           mkdir -p src/main/resources
 
           cat > pom.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
-
           <project xmlns="http://maven.apache.org/POM/4.0.0"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -36,8 +35,8 @@ jobs:
               <modelVersion>4.0.0</modelVersion>
 
               <groupId>pl.reniferek</groupId>
-              <artifactId>Hub2Protection</artifactId>
-              <version>1.5.0</version>
+              <artifactId>AdventureOnly</artifactId>
+              <version>1.0.0</version>
 
               <properties>
                   <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -62,7 +61,6 @@ jobs:
 
               <build>
                   <plugins>
-
                       <plugin>
                           <groupId>org.apache.maven.plugins</groupId>
                           <artifactId>maven-compiler-plugin</artifactId>
@@ -71,13 +69,6 @@ jobs:
                               <release>21</release>
                           </configuration>
                       </plugin>
-
-                      <plugin>
-                          <groupId>org.apache.maven.plugins</groupId>
-                          <artifactId>maven-jar-plugin</artifactId>
-                          <version>3.4.2</version>
-                      </plugin>
-
                   </plugins>
               </build>
 
@@ -85,314 +76,55 @@ jobs:
           EOF
 
           cat > src/main/resources/plugin.yml <<'EOF'
-          name: Hub2Protection
-          version: 1.5.0
-          main: pl.reniferek.hub2protection.Hub2Protection
+          name: AdventureOnly
+          version: 1.0.0
+          main: pl.reniferek.adventureonly.AdventureOnly
           api-version: '1.21'
           author: Reniferek
-          description: Lightweight Hub2 protection
+          description: Forces players into Adventure mode.
           EOF
 
-          cat > src/main/resources/config.yml <<'EOF'
-          # ==========================================
-          # Hub2Protection
-          # ==========================================
-
-          # TRYB GRY PRZY WEJŚCIU
-          # Dostępne: adventure, survival, creative, spectator
-          gamemode: adventure
-
-          # TELEPORTACJA PRZY WEJŚCIU
-          teleport-on-join: true
-
-          spawn:
-            x: 0.5
-            y: 66.0
-            z: -20.5
-            yaw: 0.0
-            pitch: 0.0
-
-          # ==========================================
-          # OCHRONA
-          # ==========================================
-
-          # Brak tracenia głodu
-          hunger: true
-
-          # Brak otrzymywania obrażeń
-          damage: true
-
-          # ==========================================
-          # ŁÓŻKA
-          # ==========================================
-
-          # Całkowita blokada używania łóżek
-          block-beds: true
-
-          # ==========================================
-          # VOID
-          # ==========================================
-
-          # Teleportacja po wpadnięciu do voida
-          void-teleport: true
-
-          # Poziom Y, przy którym następuje teleport
-          void-y: -10.0
-          EOF
-
-          cat > src/main/java/pl/reniferek/hub2protection/Hub2Protection.java <<'EOF'
-          package pl.reniferek.hub2protection;
+          cat > src/main/java/pl/reniferek/adventureonly/AdventureOnly.java <<'EOF'
+          package pl.reniferek.adventureonly;
 
           import org.bukkit.GameMode;
-          import org.bukkit.Location;
-          import org.bukkit.Material;
-          import org.bukkit.block.Block;
           import org.bukkit.entity.Player;
           import org.bukkit.event.EventHandler;
           import org.bukkit.event.EventPriority;
           import org.bukkit.event.Listener;
-          import org.bukkit.event.block.Action;
-          import org.bukkit.event.entity.EntityDamageEvent;
-          import org.bukkit.event.entity.FoodLevelChangeEvent;
-          import org.bukkit.event.player.PlayerBedEnterEvent;
-          import org.bukkit.event.player.PlayerInteractEvent;
           import org.bukkit.event.player.PlayerJoinEvent;
-          import org.bukkit.event.player.PlayerMoveEvent;
           import org.bukkit.plugin.java.JavaPlugin;
 
-          import java.util.Locale;
-
-          public final class Hub2Protection extends JavaPlugin implements Listener {
-
-              private GameMode joinGameMode;
-
-              private boolean teleportOnJoin;
-              private boolean hungerProtection;
-              private boolean damageProtection;
-              private boolean blockBeds;
-              private boolean voidTeleport;
-
-              private double spawnX;
-              private double spawnY;
-              private double spawnZ;
-
-              private float spawnYaw;
-              private float spawnPitch;
-
-              private double voidY;
+          public final class AdventureOnly extends JavaPlugin implements Listener {
 
               @Override
               public void onEnable() {
-
-                  saveDefaultConfig();
-
-                  loadSettings();
-
-                  getServer()
-                          .getPluginManager()
-                          .registerEvents(this, this);
-              }
-
-              private void loadSettings() {
-
-                  String mode = getConfig()
-                          .getString("gamemode", "adventure")
-                          .toLowerCase(Locale.ROOT);
-
-                  try {
-                      joinGameMode = GameMode.valueOf(mode.toUpperCase(Locale.ROOT));
-                  } catch (IllegalArgumentException exception) {
-                      joinGameMode = GameMode.ADVENTURE;
-                  }
-
-                  teleportOnJoin =
-                          getConfig().getBoolean("teleport-on-join", true);
-
-                  hungerProtection =
-                          getConfig().getBoolean("hunger", true);
-
-                  damageProtection =
-                          getConfig().getBoolean("damage", true);
-
-                  blockBeds =
-                          getConfig().getBoolean("block-beds", true);
-
-                  voidTeleport =
-                          getConfig().getBoolean("void-teleport", true);
-
-                  spawnX =
-                          getConfig().getDouble("spawn.x", 0.5);
-
-                  spawnY =
-                          getConfig().getDouble("spawn.y", 66.0);
-
-                  spawnZ =
-                          getConfig().getDouble("spawn.z", -20.5);
-
-                  spawnYaw =
-                          (float) getConfig().getDouble("spawn.yaw", 0.0);
-
-                  spawnPitch =
-                          (float) getConfig().getDouble("spawn.pitch", 0.0);
-
-                  voidY =
-                          getConfig().getDouble("void-y", -10.0);
+                  getServer().getPluginManager().registerEvents(this, this);
               }
 
               @EventHandler(priority = EventPriority.HIGHEST)
               public void onJoin(PlayerJoinEvent event) {
-
                   Player player = event.getPlayer();
 
-                  if (player.getGameMode() != joinGameMode) {
-                      player.setGameMode(joinGameMode);
+                  if (player.getGameMode() != GameMode.ADVENTURE) {
+                      player.setGameMode(GameMode.ADVENTURE);
                   }
-
-                  if (teleportOnJoin) {
-                      teleportToSpawn(player);
-                  }
-              }
-
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onDamage(EntityDamageEvent event) {
-
-                  if (!damageProtection) {
-                      return;
-                  }
-
-                  if (event.getEntity() instanceof Player) {
-                      event.setCancelled(true);
-                  }
-              }
-
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onFood(FoodLevelChangeEvent event) {
-
-                  if (!hungerProtection) {
-                      return;
-                  }
-
-                  if (event.getEntity() instanceof Player) {
-                      event.setCancelled(true);
-                  }
-              }
-
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onInteract(PlayerInteractEvent event) {
-
-                  if (!blockBeds) {
-                      return;
-                  }
-
-                  Action action = event.getAction();
-
-                  if (action != Action.RIGHT_CLICK_BLOCK &&
-                      action != Action.LEFT_CLICK_BLOCK) {
-                      return;
-                  }
-
-                  Block block = event.getClickedBlock();
-
-                  if (block == null) {
-                      return;
-                  }
-
-                  Material material = block.getType();
-
-                  if (material.name().endsWith("_BED")) {
-                      event.setCancelled(true);
-                  }
-              }
-
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onBedEnter(PlayerBedEnterEvent event) {
-
-                  if (blockBeds) {
-                      event.setCancelled(true);
-                  }
-              }
-
-              @EventHandler(
-                      priority = EventPriority.MONITOR,
-                      ignoreCancelled = true
-              )
-              public void onMove(PlayerMoveEvent event) {
-
-                  if (!voidTeleport) {
-                      return;
-                  }
-
-                  /*
-                   * Obrót kamerą bez zmiany bloku:
-                   * natychmiast kończymy obsługę.
-                   */
-                  if (!event.hasChangedBlock()) {
-                      return;
-                  }
-
-                  Location to = event.getTo();
-
-                  if (to == null) {
-                      return;
-                  }
-
-                  if (to.getY() <= voidY) {
-                      teleportToSpawn(event.getPlayer());
-                  }
-              }
-
-              private void teleportToSpawn(Player player) {
-
-                  Location location = new Location(
-                          player.getWorld(),
-                          spawnX,
-                          spawnY,
-                          spawnZ,
-                          spawnYaw,
-                          spawnPitch
-                  );
-
-                  player.teleport(location);
               }
           }
           EOF
 
       - name: Build
-        shell: bash
-        run: |
-          set -e
-          mvn -B package --no-transfer-progress
+        run: mvn -B package --no-transfer-progress
 
-      - name: Prepare ZIP
-        shell: bash
+      - name: Prepare
         run: |
-          set -e
-
           mkdir -p release
-
-          cp target/Hub2Protection-1.5.0.jar \
-             release/Hub2Protection.jar
-
+          cp target/AdventureOnly-1.0.0.jar release/AdventureOnly.jar
           cd release
+          zip -9 ../AdventureOnly.zip AdventureOnly.jar
 
-          zip -9 ../Hub2Protection.zip \
-              Hub2Protection.jar
-
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: Hub2Protection
-          path: Hub2Protection.zip
-          if-no-files-found: error
+          name: AdventureOnly
+          path: AdventureOnly.zip
