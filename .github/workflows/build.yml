@@ -1,4 +1,4 @@
-name: Build AdventureOnly
+name: Build AdventureCommand
 
 on:
   workflow_dispatch:
@@ -23,7 +23,7 @@ jobs:
         run: |
           set -e
 
-          mkdir -p src/main/java/pl/reniferek/adventureonly
+          mkdir -p src/main/java/pl/reniferek/adventurecommand
           mkdir -p src/main/resources
 
           cat > pom.xml <<'EOF'
@@ -35,7 +35,7 @@ jobs:
               <modelVersion>4.0.0</modelVersion>
 
               <groupId>pl.reniferek</groupId>
-              <artifactId>AdventureOnly</artifactId>
+              <artifactId>AdventureCommand</artifactId>
               <version>1.0.0</version>
 
               <properties>
@@ -76,18 +76,17 @@ jobs:
           EOF
 
           cat > src/main/resources/plugin.yml <<'EOF'
-          name: AdventureOnly
+          name: AdventureCommand
           version: 1.0.0
-          main: pl.reniferek.adventureonly.AdventureOnly
+          main: pl.reniferek.adventurecommand.AdventureCommand
           api-version: '1.21'
           author: Reniferek
-          description: Forces players into Adventure mode.
+          description: Sets every player to Adventure on join.
           EOF
 
-          cat > src/main/java/pl/reniferek/adventureonly/AdventureOnly.java <<'EOF'
-          package pl.reniferek.adventureonly;
+          cat > src/main/java/pl/reniferek/adventurecommand/AdventureCommand.java <<'EOF'
+          package pl.reniferek.adventurecommand;
 
-          import org.bukkit.GameMode;
           import org.bukkit.entity.Player;
           import org.bukkit.event.EventHandler;
           import org.bukkit.event.EventPriority;
@@ -95,7 +94,7 @@ jobs:
           import org.bukkit.event.player.PlayerJoinEvent;
           import org.bukkit.plugin.java.JavaPlugin;
 
-          public final class AdventureOnly extends JavaPlugin implements Listener {
+          public final class AdventureCommand extends JavaPlugin implements Listener {
 
               @Override
               public void onEnable() {
@@ -106,9 +105,10 @@ jobs:
               public void onJoin(PlayerJoinEvent event) {
                   Player player = event.getPlayer();
 
-                  if (player.getGameMode() != GameMode.ADVENTURE) {
-                      player.setGameMode(GameMode.ADVENTURE);
-                  }
+                  getServer().dispatchCommand(
+                          getServer().getConsoleSender(),
+                          "gamemode adventure " + player.getName()
+                  );
               }
           }
           EOF
@@ -116,15 +116,16 @@ jobs:
       - name: Build
         run: mvn -B package --no-transfer-progress
 
-      - name: Prepare
+      - name: Prepare ZIP
         run: |
           mkdir -p release
-          cp target/AdventureOnly-1.0.0.jar release/AdventureOnly.jar
+          cp target/AdventureCommand-1.0.0.jar release/AdventureCommand.jar
           cd release
-          zip -9 ../AdventureOnly.zip AdventureOnly.jar
+          zip -9 ../AdventureCommand.zip AdventureCommand.jar
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: AdventureOnly
-          path: AdventureOnly.zip
+          name: AdventureCommand
+          path: AdventureCommand.zip
+          if-no-files-found: error
