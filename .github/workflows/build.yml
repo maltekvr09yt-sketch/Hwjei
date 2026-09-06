@@ -3,410 +3,215 @@ name: Build Hub2Protection
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
 
 jobs:
   build:
-    name: Build Hub2Protection
     runs-on: ubuntu-latest
 
     steps:
-
-      # =========================================================
-      # CHECKOUT
-      # =========================================================
-
       - name: Checkout
         uses: actions/checkout@v4
 
-
-      # =========================================================
-      # JAVA 21
-      # =========================================================
-
-      - name: Set up Java 21
-        uses: actions/setup-java@v5
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-
-      # =========================================================
-      # CREATE PROJECT
-      # =========================================================
-
       - name: Create project
-        shell: bash
         run: |
-          set -e
-
-          mkdir -p src/main/java/pl/reniferek/hub2protection
-          mkdir -p src/main/resources
+          mkdir -p src/main/java/pl/hub2protection
 
           cat > pom.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
-
           <project xmlns="http://maven.apache.org/POM/4.0.0"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 
-              <modelVersion>4.0.0</modelVersion>
+            <modelVersion>4.0.0</modelVersion>
 
-              <groupId>pl.reniferek</groupId>
-              <artifactId>Hub2Protection</artifactId>
-              <version>1.4.0</version>
+            <groupId>pl.hub2protection</groupId>
+            <artifactId>Hub2Protection</artifactId>
+            <version>1.4.0</version>
 
-              <properties>
-                  <maven.compiler.release>21</maven.compiler.release>
-                  <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-              </properties>
+            <properties>
+              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+              <maven.compiler.release>21</maven.compiler.release>
+            </properties>
 
-              <repositories>
-                  <repository>
-                      <id>papermc</id>
-                      <url>https://repo.papermc.io/repository/maven-public/</url>
-                  </repository>
-              </repositories>
+            <repositories>
+              <repository>
+                <id>papermc</id>
+                <url>https://repo.papermc.io/repository/maven-public/</url>
+              </repository>
+            </repositories>
 
-              <dependencies>
-                  <dependency>
-                      <groupId>io.papermc.paper</groupId>
-                      <artifactId>paper-api</artifactId>
-                      <version>1.21.4-R0.1-SNAPSHOT</version>
-                      <scope>provided</scope>
-                  </dependency>
-              </dependencies>
+            <dependencies>
+              <dependency>
+                <groupId>io.papermc.paper</groupId>
+                <artifactId>paper-api</artifactId>
+                <version>1.21.4-R0.1-SNAPSHOT</version>
+                <scope>provided</scope>
+              </dependency>
+            </dependencies>
 
-              <build>
-                  <plugins>
+            <build>
+              <plugins>
+                <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-compiler-plugin</artifactId>
+                  <version>3.13.0</version>
+                  <configuration>
+                    <release>21</release>
+                  </configuration>
+                </plugin>
 
-                      <plugin>
-                          <groupId>org.apache.maven.plugins</groupId>
-                          <artifactId>maven-compiler-plugin</artifactId>
-                          <version>3.13.0</version>
-                          <configuration>
-                              <release>21</release>
-                          </configuration>
-                      </plugin>
-
-                      <plugin>
-                          <groupId>org.apache.maven.plugins</groupId>
-                          <artifactId>maven-jar-plugin</artifactId>
-                          <version>3.5.0</version>
-                      </plugin>
-
-                  </plugins>
-              </build>
+                <plugin>
+                  <groupId>org.apache.maven.plugins</groupId>
+                  <artifactId>maven-jar-plugin</artifactId>
+                  <version>3.4.2</version>
+                  <configuration>
+                    <archive>
+                      <manifestEntries>
+                        <paperweight-mappings-namespace>mojang</paperweight-mappings-namespace>
+                      </manifestEntries>
+                    </archive>
+                  </configuration>
+                </plugin>
+              </plugins>
+            </build>
 
           </project>
           EOF
 
-
-      # =========================================================
-      # PLUGIN.YML
-      # =========================================================
-
-          cat > src/main/resources/plugin.yml <<'EOF'
-          name: Hub2Protection
-          version: 1.4.0
-          main: pl.reniferek.hub2protection.Hub2Protection
-          api-version: '1.21'
-          author: Reniferek
-          description: Lekka ochrona Hub2.
-          EOF
-
-
-      # =========================================================
-      # JAVA
-      # =========================================================
-
-          cat > src/main/java/pl/reniferek/hub2protection/Hub2Protection.java <<'EOF'
-          package pl.reniferek.hub2protection;
+          cat > src/main/java/pl/hub2protection/Hub2Protection.java <<'EOF'
+          package pl.hub2protection;
 
           import org.bukkit.GameMode;
           import org.bukkit.Location;
           import org.bukkit.Material;
+          import org.bukkit.block.Block;
           import org.bukkit.entity.Player;
           import org.bukkit.event.EventHandler;
           import org.bukkit.event.EventPriority;
           import org.bukkit.event.Listener;
           import org.bukkit.event.block.Action;
           import org.bukkit.event.entity.EntityDamageEvent;
+          import org.bukkit.event.entity.FoodLevelChangeEvent;
+          import org.bukkit.event.player.PlayerBedEnterEvent;
           import org.bukkit.event.player.PlayerInteractEvent;
           import org.bukkit.event.player.PlayerJoinEvent;
           import org.bukkit.event.player.PlayerMoveEvent;
-          import org.bukkit.event.player.FoodLevelChangeEvent;
           import org.bukkit.plugin.java.JavaPlugin;
 
-          public final class Hub2Protection
-                  extends JavaPlugin
-                  implements Listener {
+          public final class Hub2Protection extends JavaPlugin implements Listener {
 
-              /*
-               * Stała lokalizacja wejścia na Hub2.
-               *
-               * X: 0.5
-               * Y: 66
-               * Z: -20.5
-               * Yaw: 0
-               * Pitch: 0
-               */
-              private static final double SPAWN_X = 0.5;
-              private static final double SPAWN_Y = 66.0;
-              private static final double SPAWN_Z = -20.5;
-
-              private static final float SPAWN_YAW = 0.0f;
-              private static final float SPAWN_PITCH = 0.0f;
-
+              private Location spawn;
 
               @Override
               public void onEnable() {
+                  spawn = new Location(
+                          getServer().getWorlds().get(0),
+                          0.5,
+                          66.0,
+                          -20.5,
+                          0.0f,
+                          0.0f
+                  );
 
-                  getServer()
-                          .getPluginManager()
-                          .registerEvents(this, this);
+                  getServer().getPluginManager().registerEvents(this, this);
               }
 
-
-              /*
-               * =====================================================
-               * WEJŚCIE NA SERWER
-               * =====================================================
-               *
-               * Zawsze:
-               * - Adventure
-               * - teleport na spawn Hub2
-               */
-              @EventHandler(
-                      priority = EventPriority.HIGHEST
-              )
+              @EventHandler(priority = EventPriority.HIGHEST)
               public void onJoin(PlayerJoinEvent event) {
+                  Player player = event.getPlayer();
 
-                  final Player player =
-                          event.getPlayer();
-
-
-                  /*
-                   * Zawsze Adventure.
-                   */
                   if (player.getGameMode() != GameMode.ADVENTURE) {
-
-                      player.setGameMode(
-                              GameMode.ADVENTURE
-                      );
+                      player.setGameMode(GameMode.ADVENTURE);
                   }
-
-
-                  /*
-                   * Teleport na Hub2.
-                   */
-                  final Location spawn =
-                          new Location(
-                                  player.getWorld(),
-                                  SPAWN_X,
-                                  SPAWN_Y,
-                                  SPAWN_Z,
-                                  SPAWN_YAW,
-                                  SPAWN_PITCH
-                          );
 
                   player.teleport(spawn);
               }
 
-
-              /*
-               * =====================================================
-               * BRAK OBRAŻEŃ
-               * =====================================================
-               */
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onDamage(
-                      EntityDamageEvent event
-              ) {
-
+              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              public void onDamage(EntityDamageEvent event) {
                   if (event.getEntity() instanceof Player) {
-
                       event.setCancelled(true);
                   }
               }
 
-
-              /*
-               * =====================================================
-               * BRAK GŁODU
-               * =====================================================
-               */
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onFood(
-                      FoodLevelChangeEvent event
-              ) {
-
+              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              public void onFood(FoodLevelChangeEvent event) {
                   if (event.getEntity() instanceof Player) {
-
                       event.setCancelled(true);
                   }
               }
 
+              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              public void onInteract(PlayerInteractEvent event) {
+                  Action action = event.getAction();
 
-              /*
-               * =====================================================
-               * BLOKADA ŁÓŻEK
-               * =====================================================
-               *
-               * Kliknięcie dowolnego łóżka:
-               * - nic się nie dzieje
-               * - nie można wejść do łóżka
-               * - nie ustawia spawnu
-               */
-              @EventHandler(
-                      priority = EventPriority.HIGHEST,
-                      ignoreCancelled = true
-              )
-              public void onBedUse(
-                      PlayerInteractEvent event
-              ) {
-
-                  final Action action =
-                          event.getAction();
-
-
-                  /*
-                   * Interesują nas tylko kliknięcia
-                   * blokiem.
-                   */
-                  if (
-                          action != Action.RIGHT_CLICK_BLOCK &&
-                          action != Action.LEFT_CLICK_BLOCK
-                  ) {
+                  if (action != Action.RIGHT_CLICK_BLOCK &&
+                      action != Action.LEFT_CLICK_BLOCK) {
                       return;
                   }
 
+                  Block block = event.getClickedBlock();
 
-                  final Material material =
-                          event.getClickedBlock()
-                                  .getType();
+                  if (block == null) {
+                      return;
+                  }
 
+                  Material type = block.getType();
 
-                  /*
-                   * Wszystkie warianty łóżek.
-                   */
-                  if (material.name().endsWith("_BED")) {
-
+                  if (type.name().endsWith("_BED")) {
                       event.setCancelled(true);
                   }
               }
 
+              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              public void onBedEnter(PlayerBedEnterEvent event) {
+                  event.setCancelled(true);
+              }
 
-              /*
-               * =====================================================
-               * VOID PROTECTION
-               * =====================================================
-               *
-               * Bez taska.
-               *
-               * Sprawdzamy tylko po zmianie bloku.
-               */
-              @EventHandler(
-                      priority = EventPriority.MONITOR,
-                      ignoreCancelled = true
-              )
-              public void onMove(
-                      PlayerMoveEvent event
-              ) {
-
-                  /*
-                   * Obracanie kamerą:
-                   * natychmiast wychodzimy.
-                   */
+              @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+              public void onMove(PlayerMoveEvent event) {
                   if (!event.hasChangedBlock()) {
                       return;
                   }
 
+                  if (event.getTo() == null) {
+                      return;
+                  }
 
-                  final Player player =
-                          event.getPlayer();
-
-
-                  final int y =
-                          event.getTo().getBlockY();
-
-
-                  /*
-                   * Ochrona przed voidem.
-                   */
-                  if (y <= -10) {
-
-                      final Location spawn =
-                              new Location(
-                                      player.getWorld(),
-                                      SPAWN_X,
-                                      SPAWN_Y,
-                                      SPAWN_Z,
-                                      SPAWN_YAW,
-                                      SPAWN_PITCH
-                              );
-
-                      player.teleport(spawn);
+                  if (event.getTo().getBlockY() <= -10) {
+                      event.getPlayer().teleport(spawn);
                   }
               }
           }
           EOF
 
+          cat > src/main/resources/plugin.yml <<'EOF'
+          name: Hub2Protection
+          version: 1.4.0
+          main: pl.hub2protection.Hub2Protection
+          api-version: '1.21'
+          description: Lightweight protection plugin for Hub2
+          author: Hub2
+          EOF
 
-      # =========================================================
-      # BUILD
-      # =========================================================
+      - name: Build
+        run: mvn -B package --no-transfer-progress
 
-      - name: Build plugin
-        run: mvn -B clean package
-
-
-      # =========================================================
-      # PREPARE JAR
-      # =========================================================
-
-      - name: Prepare release
-        shell: bash
+      - name: Prepare artifact
         run: |
-          set -e
-
           mkdir -p release
-
-          cp \
-            target/Hub2Protection-1.4.0.jar \
-            release/Hub2Protection.jar
-
-
-      # =========================================================
-      # ZIP
-      # =========================================================
-
-      - name: Create ZIP
-        shell: bash
-        run: |
-          set -e
-
+          cp target/Hub2Protection-1.4.0.jar release/Hub2Protection.jar
           cd release
+          zip ../Hub2Protection.zip Hub2Protection.jar
 
-          zip -9 \
-            ../Hub2Protection.zip \
-            Hub2Protection.jar
-
-
-      # =========================================================
-      # UPLOAD
-      # =========================================================
-
-      - name: Upload plugin
+      - name: Upload ZIP
         uses: actions/upload-artifact@v4
         with:
           name: Hub2Protection
           path: Hub2Protection.zip
-          if-no-files-found: error
