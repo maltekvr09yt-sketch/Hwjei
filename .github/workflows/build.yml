@@ -137,7 +137,7 @@ jobs:
                           if (entry.getKey().equals(p.getUniqueId())) continue;
                           for (UUID entityId : entry.getValue()) {
                               Entity entity = Bukkit.getEntity(entityId);
-                              if (entity != null) entity.hideEntity(this, p);
+                              if (entity != null) p.hideEntity(this, entity);
                           }
                       }
                   }
