@@ -16,11 +16,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-          cache: maven
 
       - name: Create Maven project
         shell: bash
@@ -35,6 +34,7 @@ jobs:
           <project xmlns="http://maven.apache.org/POM/4.0.0"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
               <modelVersion>4.0.0</modelVersion>
 
               <groupId>pl.reniferek</groupId>
@@ -66,6 +66,7 @@ jobs:
 
               <build>
                   <plugins>
+
                       <plugin>
                           <groupId>org.apache.maven.plugins</groupId>
                           <artifactId>maven-compiler-plugin</artifactId>
@@ -79,16 +80,11 @@ jobs:
                           <groupId>org.apache.maven.plugins</groupId>
                           <artifactId>maven-jar-plugin</artifactId>
                           <version>3.4.2</version>
-                          <configuration>
-                              <archive>
-                                  <manifestEntries>
-                                      <Built-By>GitHub Actions</Built-By>
-                                  </manifestEntries>
-                              </archive>
-                          </configuration>
                       </plugin>
+
                   </plugins>
               </build>
+
           </project>
           EOF
 
@@ -98,7 +94,7 @@ jobs:
           main: pl.reniferek.hub2protection.Hub2Protection
           api-version: '1.21'
           author: Reniferek
-          description: Ochrona hub2, brak glodu i obrazen oraz teleport na spawn.
+          description: Ochrona hub2, brak glodu, obrazen i teleport na spawn.
           EOF
 
           cat > hub2protection/src/main/resources/config.yml <<'EOF'
@@ -156,6 +152,7 @@ jobs:
 
               private void loadSettings() {
                   worldName = getConfig().getString("world", "hub2");
+
                   noHunger = getConfig().getBoolean("hunger", true);
                   noDamage = getConfig().getBoolean("hearts", true);
                   teleportOnJoin = getConfig().getBoolean("teleport-on-join", true);
@@ -163,6 +160,7 @@ jobs:
                   spawnX = getConfig().getDouble("spawn.x", 0.5);
                   spawnY = getConfig().getDouble("spawn.y", 66.0);
                   spawnZ = getConfig().getDouble("spawn.z", -20.5);
+
                   spawnYaw = (float) getConfig().getDouble("spawn.yaw", 0.0);
                   spawnPitch = (float) getConfig().getDouble("spawn.pitch", 0.0);
               }
@@ -171,9 +169,17 @@ jobs:
                   return player.getWorld().getName().equalsIgnoreCase(worldName);
               }
 
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
               public void onFood(FoodLevelChangeEvent event) {
-                  if (!noHunger || !(event.getEntity() instanceof Player player)) {
+
+                  if (!noHunger) {
+                      return;
+                  }
+
+                  if (!(event.getEntity() instanceof Player player)) {
                       return;
                   }
 
@@ -182,9 +188,17 @@ jobs:
                   }
               }
 
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
               public void onDamage(EntityDamageEvent event) {
-                  if (!noDamage || !(event.getEntity() instanceof Player player)) {
+
+                  if (!noDamage) {
+                      return;
+                  }
+
+                  if (!(event.getEntity() instanceof Player player)) {
                       return;
                   }
 
@@ -195,6 +209,7 @@ jobs:
 
               @EventHandler
               public void onChangedWorld(PlayerChangedWorldEvent event) {
+
                   if (!teleportOnJoin) {
                       return;
                   }
@@ -202,14 +217,17 @@ jobs:
                   Player player = event.getPlayer();
 
                   Bukkit.getScheduler().runTask(this, () -> {
+
                       if (isHub2(player)) {
                           teleportToSpawn(player);
                       }
+
                   });
               }
 
               @EventHandler
               public void onJoin(PlayerJoinEvent event) {
+
                   if (!teleportOnJoin) {
                       return;
                   }
@@ -217,17 +235,22 @@ jobs:
                   Player player = event.getPlayer();
 
                   Bukkit.getScheduler().runTask(this, () -> {
+
                       if (isHub2(player)) {
                           teleportToSpawn(player);
                       }
+
                   });
               }
 
               private void teleportToSpawn(Player player) {
+
                   World world = Bukkit.getWorld(worldName);
 
                   if (world == null) {
-                      getLogger().warning("Nie znaleziono swiata: " + worldName);
+                      getLogger().warning(
+                              "Nie znaleziono swiata: " + worldName
+                      );
                       return;
                   }
 
@@ -253,8 +276,12 @@ jobs:
         shell: bash
         run: |
           set -e
+
           mkdir -p artifacts
-          cp hub2protection/target/Hub2Protection-1.0.0.jar artifacts/Hub2Protection.jar
+
+          cp \
+            hub2protection/target/Hub2Protection-1.0.0.jar \
+            artifacts/Hub2Protection.jar
 
       - name: Upload Hub2Protection.jar
         uses: actions/upload-artifact@v4
