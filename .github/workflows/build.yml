@@ -1,4 +1,4 @@
-name: Build ServerTeleport Paper + Velocity
+name: Build ServerTeleport
 
 on:
   workflow_dispatch:
@@ -13,14 +13,25 @@ jobs:
 
     steps:
 
+      # =========================================================
+      # CHECKOUT
+      # =========================================================
+
       - name: Checkout
         uses: actions/checkout@v4
+
+
+      # =========================================================
+      # JAVA 21
+      # =========================================================
 
       - name: Set up Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+          cache: maven
+
 
       # =========================================================
       # PAPER
@@ -44,7 +55,7 @@ jobs:
 
               <groupId>pl.reniferek</groupId>
               <artifactId>ServerTeleport-Paper</artifactId>
-              <version>1.1.0</version>
+              <version>1.2.0</version>
 
               <properties>
                   <maven.compiler.release>21</maven.compiler.release>
@@ -82,7 +93,7 @@ jobs:
                       <plugin>
                           <groupId>org.apache.maven.plugins</groupId>
                           <artifactId>maven-jar-plugin</artifactId>
-                          <version>3.4.2</version>
+                          <version>3.5.0</version>
                       </plugin>
 
                   </plugins>
@@ -91,14 +102,16 @@ jobs:
           </project>
           EOF
 
+
           cat > paper/src/main/resources/plugin.yml <<'EOF'
           name: ServerTeleport
-          version: 1.1.0
+          version: 1.2.0
           main: pl.reniferek.servertp.ServerTeleport
           api-version: '1.21'
           author: Reniferek
           description: Lekki system Paper -> Velocity.
           EOF
+
 
           cat > paper/src/main/resources/config.yml <<'EOF'
           server: "LifeStealSMPspawn"
@@ -114,6 +127,7 @@ jobs:
           require-air: false
           once-per-entry: true
           EOF
+
 
           cat > paper/src/main/java/pl/reniferek/servertp/ServerTeleport.java <<'EOF'
           package pl.reniferek.servertp;
@@ -135,7 +149,8 @@ jobs:
 
           public final class ServerTeleport extends JavaPlugin implements Listener {
 
-              private static final String CHANNEL = "serverteleport:main";
+              private static final String CHANNEL =
+                      "serverteleport:main";
 
               private String targetServer;
 
@@ -148,7 +163,9 @@ jobs:
               private boolean requireAir;
               private boolean oncePerEntry;
 
-              private final Set<UUID> insidePlayers = new HashSet<>();
+              private final Set<UUID> insidePlayers =
+                      new HashSet<>();
+
 
               @Override
               public void onEnable() {
@@ -160,13 +177,30 @@ jobs:
                           "LifeStealSMPspawn"
                   );
 
-                  minX = getConfig().getInt("min-x", -4);
-                  maxX = getConfig().getInt("max-x", 4);
+                  minX = getConfig().getInt(
+                          "min-x",
+                          -4
+                  );
 
-                  minY = getConfig().getInt("min-y", 68);
-                  maxY = getConfig().getInt("max-y", 77);
+                  maxX = getConfig().getInt(
+                          "max-x",
+                          4
+                  );
 
-                  targetZ = getConfig().getInt("z", 9);
+                  minY = getConfig().getInt(
+                          "min-y",
+                          68
+                  );
+
+                  maxY = getConfig().getInt(
+                          "max-y",
+                          77
+                  );
+
+                  targetZ = getConfig().getInt(
+                          "z",
+                          9
+                  );
 
                   requireAir = getConfig().getBoolean(
                           "require-air",
@@ -185,8 +219,12 @@ jobs:
                           );
 
                   getServer().getPluginManager()
-                          .registerEvents(this, this);
+                          .registerEvents(
+                                  this,
+                                  this
+                          );
               }
+
 
               @Override
               public void onDisable() {
@@ -200,6 +238,7 @@ jobs:
                           );
               }
 
+
               @EventHandler(
                       priority = EventPriority.MONITOR,
                       ignoreCancelled = true
@@ -207,24 +246,31 @@ jobs:
               public void onMove(PlayerMoveEvent event) {
 
                   /*
-                   * Najważniejsza optymalizacja.
-                   * Obracanie kamerą bez zmiany bloku
-                   * kończy się natychmiast.
+                   * Najważniejsza optymalizacja:
+                   * obrót kamerą bez zmiany bloku kończy event natychmiast.
                    */
                   if (!event.hasChangedBlock()) {
                       return;
                   }
 
-                  final Player player = event.getPlayer();
+                  final Player player =
+                          event.getPlayer();
 
-                  final int x = event.getTo().getBlockX();
-                  final int y = event.getTo().getBlockY();
-                  final int z = event.getTo().getBlockZ();
+                  final int x =
+                          event.getTo().getBlockX();
 
-                  final UUID uuid = player.getUniqueId();
+                  final int y =
+                          event.getTo().getBlockY();
+
+                  final int z =
+                          event.getTo().getBlockZ();
+
+                  final UUID uuid =
+                          player.getUniqueId();
+
 
                   /*
-                   * Sprawdzenie obszaru portalu.
+                   * Sprawdzenie regionu portalu.
                    */
                   if (
                           x < minX ||
@@ -241,19 +287,23 @@ jobs:
                       return;
                   }
 
+
                   /*
                    * Opcjonalne wymaganie powietrza.
                    */
                   if (
                           requireAir &&
-                          !event.getTo().getBlock().isEmpty()
+                          !event.getTo()
+                                  .getBlock()
+                                  .isEmpty()
                   ) {
                       return;
                   }
 
+
                   /*
-                   * Tylko jedno uruchomienie
-                   * podczas jednego wejścia.
+                   * Tylko jedno wywołanie przy wejściu
+                   * do regionu.
                    */
                   if (
                           oncePerEntry &&
@@ -262,25 +312,33 @@ jobs:
                       return;
                   }
 
+
                   sendTeleportRequest(player);
               }
+
 
               @EventHandler
               public void onQuit(PlayerQuitEvent event) {
 
                   if (oncePerEntry) {
+
                       insidePlayers.remove(
-                              event.getPlayer().getUniqueId()
+                              event.getPlayer()
+                                      .getUniqueId()
                       );
                   }
               }
 
-              private void sendTeleportRequest(Player player) {
+
+              private void sendTeleportRequest(
+                      Player player
+              ) {
 
                   final ByteArrayDataOutput output =
                           ByteStreams.newDataOutput();
 
                   output.writeUTF("CHECK");
+
                   output.writeUTF(targetServer);
 
                   player.sendPluginMessage(
@@ -292,9 +350,11 @@ jobs:
           }
           EOF
 
+
       - name: Build Paper
         working-directory: paper
         run: mvn -B clean package
+
 
       # =========================================================
       # VELOCITY
@@ -318,7 +378,7 @@ jobs:
 
               <groupId>pl.reniferek</groupId>
               <artifactId>ServerTeleport-Velocity</artifactId>
-              <version>1.4.0</version>
+              <version>1.5.0</version>
 
               <properties>
                   <maven.compiler.release>21</maven.compiler.release>
@@ -358,13 +418,14 @@ jobs:
                                       <version>3.4.0-SNAPSHOT</version>
                                   </path>
                               </annotationProcessorPaths>
+
                           </configuration>
                       </plugin>
 
                       <plugin>
                           <groupId>org.apache.maven.plugins</groupId>
                           <artifactId>maven-jar-plugin</artifactId>
-                          <version>3.4.2</version>
+                          <version>3.5.0</version>
                       </plugin>
 
                   </plugins>
@@ -373,11 +434,12 @@ jobs:
           </project>
           EOF
 
+
           cat > velocity/src/main/resources/velocity-plugin.json <<'EOF'
           {
-            "id": "servertp",
+            "id": "serverteleport",
             "name": "ServerTeleport",
-            "version": "1.4.0",
+            "version": "1.5.0",
             "description": "Lekki system Paper -> Velocity.",
             "authors": [
               "Reniferek"
@@ -385,6 +447,7 @@ jobs:
             "main": "pl.reniferek.servertp.ServerTeleportVelocity"
           }
           EOF
+
 
           cat > velocity/src/main/java/pl/reniferek/servertp/ServerTeleportVelocity.java <<'EOF'
           package pl.reniferek.servertp;
@@ -398,22 +461,22 @@ jobs:
           import com.velocitypowered.api.event.connection.PluginMessageEvent;
           import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
           import com.velocitypowered.api.plugin.Plugin;
-
           import com.velocitypowered.api.proxy.Player;
           import com.velocitypowered.api.proxy.ProxyServer;
           import com.velocitypowered.api.proxy.ServerConnection;
-
           import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
           import com.velocitypowered.api.proxy.server.RegisteredServer;
 
           import net.kyori.adventure.text.Component;
+          import net.kyori.adventure.text.format.NamedTextColor;
 
           import java.util.Optional;
 
+
           @Plugin(
-                  id = "servertp",
+                  id = "serverteleport",
                   name = "ServerTeleport",
-                  version = "1.4.0",
+                  version = "1.5.0",
                   description = "Lekki system Paper -> Velocity.",
                   authors = {"Reniferek"}
           )
@@ -430,11 +493,15 @@ jobs:
 
               private final ProxyServer proxy;
 
+
               /*
-               * true  = LifeStealSMP otwarty
-               * false = LifeStealSMP zablokowany
+               * true = zablokowane
+               * false = odblokowane
+               *
+               * Domyślnie odblokowane.
                */
-              private volatile boolean open = true;
+              private volatile boolean blockade = false;
+
 
               @Inject
               public ServerTeleportVelocity(
@@ -442,6 +509,7 @@ jobs:
               ) {
                   this.proxy = proxy;
               }
+
 
               @Subscribe
               public void onProxyInitialization(
@@ -451,6 +519,7 @@ jobs:
                   proxy.getChannelRegistrar()
                           .register(CHANNEL);
 
+
                   proxy.getCommandManager().register(
                           proxy.getCommandManager()
                                   .metaBuilder(
@@ -459,6 +528,7 @@ jobs:
                                   .build(),
                           new BlockCommand()
                   );
+
 
                   proxy.getCommandManager().register(
                           proxy.getCommandManager()
@@ -470,118 +540,133 @@ jobs:
                   );
               }
 
+
               @Subscribe
               public void onPluginMessage(
                       PluginMessageEvent event
               ) {
 
-                  /*
-                   * Najpierw sprawdzamy kanał.
-                   */
-                  if (!CHANNEL.equals(event.getIdentifier())) {
+                  if (!CHANNEL.equals(
+                          event.getIdentifier()
+                  )) {
                       return;
                   }
 
+
                   /*
-                   * Obsługujemy wiadomość całkowicie.
-                   * Nie przekazujemy jej dalej.
+                   * Nie przekazujemy wiadomości dalej.
                    */
                   event.setResult(
-                          PluginMessageEvent.ForwardResult.handled()
+                          PluginMessageEvent
+                                  .ForwardResult
+                                  .handled()
                   );
+
 
                   /*
                    * Wiadomość musi pochodzić
-                   * z backendowego serwera.
+                   * z połączenia backend -> Velocity.
                    */
                   if (!(event.getSource()
                           instanceof ServerConnection connection)) {
                       return;
                   }
 
-                  /*
-                   * Gracz jest przypisany do ServerConnection.
-                   */
+
                   final Player player =
                           connection.getPlayer();
 
-                  /*
-                   * Odczyt wiadomości.
-                   */
+
                   final ByteArrayDataInput input =
                           ByteStreams.newDataInput(
                                   event.getData()
                           );
 
+
                   final String action;
 
                   try {
+
                       action = input.readUTF();
+
                   } catch (Exception ignored) {
+
                       return;
                   }
+
 
                   if (!"CHECK".equals(action)) {
                       return;
                   }
 
+
                   final String requestedServer;
 
                   try {
-                      requestedServer = input.readUTF();
+
+                      requestedServer =
+                              input.readUTF();
+
                   } catch (Exception ignored) {
+
                       return;
                   }
 
-                  /*
-                   * Zabezpieczenie:
-                   * plugin może przekierować tylko
-                   * na LifeStealSMPspawn.
-                   */
-                  if (!TARGET_SERVER.equals(requestedServer)) {
+
+                  if (!TARGET_SERVER.equalsIgnoreCase(
+                          requestedServer
+                  )) {
                       return;
                   }
 
+
                   /*
-                   * Sprawdzenie blokady.
+                   * BLOKADA
                    */
-                  if (!open) {
+                  if (blockade) {
 
                       player.sendMessage(
                               Component.text(
                                       "LifeStealSMP jest aktualnie zablokowany."
+                              ).color(
+                                      NamedTextColor.RED
                               )
                       );
 
                       return;
                   }
 
+
                   /*
-                   * Pobranie serwera z Velocity.
+                   * Szukanie serwera.
                    */
                   final Optional<RegisteredServer> optional =
                           proxy.getServer(TARGET_SERVER);
+
 
                   if (optional.isEmpty()) {
 
                       player.sendMessage(
                               Component.text(
                                       "LifeStealSMP jest aktualnie wyłączony."
+                              ).color(
+                                      NamedTextColor.RED
                               )
                       );
 
                       return;
                   }
 
+
                   final RegisteredServer target =
                           optional.get();
 
+
                   /*
-                   * Ping jest wykonywany tylko wtedy,
-                   * gdy gracz faktycznie użyje portalu.
+                   * Ping tylko wtedy, kiedy gracz
+                   * faktycznie użył portalu.
                    *
-                   * Nie ma żadnego pingowania co sekundę,
-                   * co tick ani w tle.
+                   * Brak żadnego ciągłego pingowania.
                    */
                   target.ping().whenComplete(
                           (ping, error) -> {
@@ -589,9 +674,12 @@ jobs:
                               if (error != null) {
 
                                   if (player.isActive()) {
+
                                       player.sendMessage(
                                               Component.text(
                                                       "LifeStealSMP jest aktualnie wyłączony."
+                                              ).color(
+                                                      NamedTextColor.RED
                                               )
                                       );
                                   }
@@ -599,66 +687,76 @@ jobs:
                                   return;
                               }
 
-                              /*
-                               * Sprawdzenie, czy gracz nadal jest online.
-                               */
+
                               if (!player.isActive()) {
                                   return;
                               }
 
+
                               /*
-                               * Blokada mogła zostać zmieniona
-                               * podczas wykonywania pinga.
+                               * Ponowna kontrola blokady
+                               * przed połączeniem.
                                */
-                              if (!open) {
+                              if (blockade) {
 
                                   player.sendMessage(
                                           Component.text(
                                                   "LifeStealSMP jest aktualnie zablokowany."
+                                          ).color(
+                                                  NamedTextColor.RED
                                           )
                                   );
 
                                   return;
                               }
 
-                              /*
-                               * Połączenie z LifeStealSMP.
-                               */
-                              player.createConnectionRequest(target)
-                                      .connect()
-                                      .thenAccept(result -> {
 
-                                          if (!result.isSuccessful()
-                                                  && player.isActive()) {
+                              player.createConnectionRequest(
+                                      target
+                              )
+                              .connect()
+                              .thenAccept(result -> {
 
-                                              player.sendMessage(
-                                                      Component.text(
-                                                              "Nie udało się połączyć z LifeStealSMP."
-                                                      )
-                                              );
-                                          }
-                                      })
-                                      .exceptionally(connectionError -> {
+                                  if (
+                                          !result.isSuccessful() &&
+                                          player.isActive()
+                                  ) {
 
-                                          if (player.isActive()) {
+                                      player.sendMessage(
+                                              Component.text(
+                                                      "Nie udało się połączyć z LifeStealSMP."
+                                              ).color(
+                                                      NamedTextColor.RED
+                                              )
+                                      );
+                                  }
 
-                                              player.sendMessage(
-                                                      Component.text(
-                                                              "Nie udało się połączyć z LifeStealSMP."
-                                                      )
-                                              );
-                                          }
+                              })
+                              .exceptionally(error2 -> {
 
-                                          return null;
-                                      });
+                                  if (player.isActive()) {
+
+                                      player.sendMessage(
+                                              Component.text(
+                                                      "Nie udało się połączyć z LifeStealSMP."
+                                              ).color(
+                                                      NamedTextColor.RED
+                                              )
+                                      );
+                                  }
+
+                                  return null;
+                              });
                           }
                   );
               }
 
-              // =====================================================
-              // /blokadaLifeStealSMP
-              // =====================================================
 
+              /*
+               * =====================================================
+               * /blokadaLifeStealSMP
+               * =====================================================
+               */
               private final class BlockCommand
                       implements SimpleCommand {
 
@@ -669,6 +767,7 @@ jobs:
 
                       final String[] args =
                               invocation.arguments();
+
 
                       if (args.length != 1) {
 
@@ -681,37 +780,44 @@ jobs:
                           return;
                       }
 
+
                       /*
-                       * ON = otwórz LifeStealSMP.
+                       * ON = ZABLOKOWANE
                        */
                       if (args[0].equalsIgnoreCase("on")) {
 
-                          open = true;
-
-                          invocation.source().sendMessage(
-                                  Component.text(
-                                          "LifeStealSMP: OTWARTY"
-                                  )
-                          );
-
-                          return;
-                      }
-
-                      /*
-                       * OFF = zablokuj LifeStealSMP.
-                       */
-                      if (args[0].equalsIgnoreCase("off")) {
-
-                          open = false;
+                          blockade = true;
 
                           invocation.source().sendMessage(
                                   Component.text(
                                           "LifeStealSMP: ZABLOKOWANY"
+                                  ).color(
+                                          NamedTextColor.RED
                                   )
                           );
 
                           return;
                       }
+
+
+                      /*
+                       * OFF = ODBLOKOWANE
+                       */
+                      if (args[0].equalsIgnoreCase("off")) {
+
+                          blockade = false;
+
+                          invocation.source().sendMessage(
+                                  Component.text(
+                                          "LifeStealSMP: ODBLOKOWANY"
+                                  ).color(
+                                          NamedTextColor.GREEN
+                                  )
+                          );
+
+                          return;
+                      }
+
 
                       invocation.source().sendMessage(
                               Component.text(
@@ -721,10 +827,12 @@ jobs:
                   }
               }
 
-              // =====================================================
-              // /statusLifeStealSMP
-              // =====================================================
 
+              /*
+               * =====================================================
+               * /statusLifeStealSMP
+               * =====================================================
+               */
               private final class StatusCommand
                       implements SimpleCommand {
 
@@ -733,66 +841,129 @@ jobs:
                           Invocation invocation
                   ) {
 
+                      final String blockadeText =
+                              blockade
+                                      ? "ZABLOKOWANY"
+                                      : "ODBLOKOWANY";
+
+
+                      final NamedTextColor blockadeColor =
+                              blockade
+                                      ? NamedTextColor.RED
+                                      : NamedTextColor.GREEN;
+
+
+                      /*
+                       * Stary styl:
+                       * §8§m----------------------------
+                       */
+                      invocation.source().sendMessage(
+                              Component.text(
+                                      "----------------------------"
+                              ).color(
+                                      NamedTextColor.DARK_GRAY
+                              )
+                      );
+
+
+                      /*
+                       * §eLifeStealSMP
+                       */
+                      invocation.source().sendMessage(
+                              Component.text(
+                                      "LifeStealSMP"
+                              ).color(
+                                      NamedTextColor.YELLOW
+                              )
+                      );
+
+
+                      /*
+                       * §7Blokada:
+                       */
+                      invocation.source().sendMessage(
+                              Component.text(
+                                      "Blokada: "
+                              ).color(
+                                      NamedTextColor.GRAY
+                              ).append(
+                                      Component.text(
+                                              blockadeText
+                                      ).color(
+                                              blockadeColor
+                                      )
+                              )
+                      );
+
+
+                      /*
+                       * Sprawdzamy serwer.
+                       */
                       final Optional<RegisteredServer> optional =
-                              proxy.getServer(TARGET_SERVER);
+                              proxy.getServer(
+                                      TARGET_SERVER
+                              );
 
-                      invocation.source().sendMessage(
-                              Component.text(
-                                      "§7§m--------------------"
-                              )
-                      );
-
-                      invocation.source().sendMessage(
-                              Component.text(
-                                      "§eLifeStealSMP"
-                              )
-                      );
-
-                      invocation.source().sendMessage(
-                              Component.text(
-                                      "§7Blokada: " +
-                                              (open
-                                                      ? "§aODBLOKOWANY"
-                                                      : "§cZABLOKOWANY")
-                              )
-                      );
 
                       if (optional.isEmpty()) {
 
                           invocation.source().sendMessage(
                                   Component.text(
-                                          "§7Serwer: §cWYŁĄCZONY"
+                                          "Serwer: "
+                                  ).color(
+                                          NamedTextColor.GRAY
+                                  ).append(
+                                          Component.text(
+                                                  "WYŁĄCZONY"
+                                          ).color(
+                                                  NamedTextColor.RED
+                                          )
                                   )
                           );
 
+
                           invocation.source().sendMessage(
                                   Component.text(
-                                          "§7§m--------------------"
+                                          "----------------------------"
+                                  ).color(
+                                          NamedTextColor.DARK_GRAY
                                   )
                           );
 
                           return;
                       }
 
+
                       /*
-                       * Status robi pojedynczy ping
-                       * tylko po wpisaniu komendy.
+                       * Ping tylko po wpisaniu statusu.
                        */
                       optional.get().ping().whenComplete(
                               (ping, error) -> {
 
                                   invocation.source().sendMessage(
                                           Component.text(
-                                                  "§7Serwer: " +
-                                                          (error == null
-                                                                  ? "§aURUCHOMIONY"
-                                                                  : "§cWYŁĄCZONY")
+                                                  "Serwer: "
+                                          ).color(
+                                                  NamedTextColor.GRAY
+                                          ).append(
+                                                  Component.text(
+                                                          error == null
+                                                                  ? "URUCHOMIONY"
+                                                                  : "WYŁĄCZONY"
+                                                  ).color(
+                                                          error == null
+                                                                  ? NamedTextColor.GREEN
+                                                                  : NamedTextColor.RED
+                                                  )
                                           )
                                   );
 
+
                                   invocation.source().sendMessage(
                                           Component.text(
-                                                  "§7§m--------------------"
+                                                  "----------------------------"
+                                          ).color(
+                                                  NamedTextColor.DARK_GRAY
                                           )
                                   );
                               }
@@ -802,39 +973,56 @@ jobs:
           }
           EOF
 
+
       - name: Build Velocity
         working-directory: velocity
         run: mvn -B clean package
 
+
       # =========================================================
-      # GOTOWE JARY
+      # PREPARE JARS
       # =========================================================
 
-      - name: Prepare plugins
+      - name: Prepare release
         shell: bash
         run: |
           set -e
 
-          mkdir -p artifacts
+          mkdir -p release
 
           cp \
-            paper/target/ServerTeleport-Paper-1.1.0.jar \
-            artifacts/ServerTeleport-Paper.jar
+            paper/target/ServerTeleport-Paper-1.2.0.jar \
+            release/ServerTeleport-Paper.jar
 
           cp \
-            velocity/target/ServerTeleport-Velocity-1.4.0.jar \
-            artifacts/ServerTeleport-Velocity.jar
+            velocity/target/ServerTeleport-Velocity-1.5.0.jar \
+            release/ServerTeleport-Velocity.jar
 
-      - name: Upload Paper
+
+      # =========================================================
+      # ONE ZIP
+      # =========================================================
+
+      - name: Create ZIP
+        shell: bash
+        run: |
+          set -e
+
+          cd release
+
+          zip -9 \
+            ../ServerTeleport-Paper-Velocity.zip \
+            ServerTeleport-Paper.jar \
+            ServerTeleport-Velocity.jar
+
+
+      # =========================================================
+      # UPLOAD ONLY ONE ARTIFACT
+      # =========================================================
+
+      - name: Upload complete ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: ServerTeleport-Paper
-          path: artifacts/ServerTeleport-Paper.jar
-          if-no-files-found: error
-
-      - name: Upload Velocity
-        uses: actions/upload-artifact@v4
-        with:
-          name: ServerTeleport-Velocity
-          path: artifacts/ServerTeleport-Velocity.jar
+          name: ServerTeleport-Paper-Velocity
+          path: ServerTeleport-Paper-Velocity.zip
           if-no-files-found: error
