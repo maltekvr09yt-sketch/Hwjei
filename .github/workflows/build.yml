@@ -1,4 +1,4 @@
-name: Build HologramPlugin FINAL
+name: Build HologramPlugin Bridge v1.3.1
 
 on:
   workflow_dispatch:
@@ -16,6 +16,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+          cache: maven
 
       - name: Create project
         shell: bash
@@ -32,7 +33,7 @@ jobs:
             <modelVersion>4.0.0</modelVersion>
             <groupId>pl.reniferek</groupId>
             <artifactId>HologramPlugin</artifactId>
-            <version>1.1.0</version>
+            <version>1.3.1</version>
             <properties>
               <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
               <maven.compiler.release>21</maven.compiler.release>
@@ -66,15 +67,15 @@ jobs:
 
           cat > src/main/resources/plugin.yml <<'EOF'
           name: HologramPlugin
-          version: 1.1.0
+          version: 1.3.1
           main: pl.reniferek.hologram.HologramPlugin
           api-version: '1.21'
           author: Reniferek
-          description: Lightweight persistent holograms for Paper 1.21.4
+          description: Very lightweight persistent holograms for Paper 1.21.4
           commands:
             hologram:
               description: Zarzadzanie hologramami
-              usage: /hologram
+              usage: /hologram help
               aliases: [holo]
               permission: hologram.admin
           permissions:
@@ -83,32 +84,29 @@ jobs:
           EOF
 
           cat > src/main/resources/config.yml <<'EOF'
-          # HologramPlugin 1.1.0
+          # HologramPlugin 1.3.0
           hologram:
-            # Odstep miedzy liniami w blokach.
             line-spacing: 0.25
-
-            # Szerokosc, przy ktorej TextDisplay zaczyna zawijac tekst.
-            # Bardzo duza wartosc = dlugi tekst pozostaje w jednej linii.
+            # Ogromna szerokosc TextDisplay - tekst nie powinien sie zawijac.
             line-width: 100000
-
-            # Cien tekstu.
             shadow: false
-
-            # Tekst widoczny przez bloki.
             see-through: true
           EOF
 
           cat > src/main/java/pl/reniferek/hologram/HologramPlugin.java <<'EOF'
           package pl.reniferek.hologram;
 
-          import net.kyori.adventure.text.Component;
           import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+          import com.google.common.io.ByteArrayDataInput;
+          import com.google.common.io.ByteArrayDataOutput;
+          import com.google.common.io.ByteStreams;
           import org.bukkit.Bukkit;
           import org.bukkit.ChatColor;
           import org.bukkit.Location;
           import org.bukkit.World;
+          import org.bukkit.NamespacedKey;
           import org.bukkit.command.*;
+          import org.bukkit.configuration.file.YamlConfiguration;
           import org.bukkit.entity.Display;
           import org.bukkit.entity.Entity;
           import org.bukkit.entity.Player;
@@ -117,10 +115,8 @@ jobs:
           import org.bukkit.event.Listener;
           import org.bukkit.event.player.PlayerJoinEvent;
           import org.bukkit.event.player.PlayerQuitEvent;
-          import org.bukkit.NamespacedKey;
           import org.bukkit.persistence.PersistentDataType;
           import org.bukkit.plugin.java.JavaPlugin;
-          import org.bukkit.configuration.file.YamlConfiguration;
 
           import java.io.File;
           import java.util.*;
@@ -141,6 +137,12 @@ jobs:
               private boolean shadow;
               private boolean seeThrough;
 
+              private static final String STATS_CHANNEL = "serverteleport:stats";
+              private int lifeStealOnline = 0;
+              private int lifeStealMax = 0;
+              private String lifeStealStatus = "wyłączony";
+              private String lifeStealBlockade = "otwarty";
+
               @Override
               public void onEnable() {
                   saveDefaultConfig();
@@ -148,6 +150,7 @@ jobs:
                   new File(getDataFolder(), "hologramy").mkdirs();
 
                   idKey = new NamespacedKey(this, "hologram-id");
+
                   spacing = getConfig().getDouble("hologram.line-spacing", DEFAULT_SPACING);
                   if (spacing <= 0.0D) spacing = DEFAULT_SPACING;
 
@@ -157,7 +160,13 @@ jobs:
                   shadow = getConfig().getBoolean("hologram.shadow", false);
                   seeThrough = getConfig().getBoolean("hologram.see-through", true);
 
-                  getServer().getPluginManager().registerEvents(this, this);
+                  Bukkit.getMessenger().registerIncomingPluginChannel(this, STATS_CHANNEL, (channel, player, message) -> {
+                      if (!STATS_CHANNEL.equals(channel)) return;
+                      receiveStats(message);
+                  });
+                  Bukkit.getMessenger().registerOutgoingPluginChannel(this, STATS_CHANNEL);
+
+                  Bukkit.getPluginManager().registerEvents(this, this);
 
                   PluginCommand command = getCommand("hologram");
                   if (command != null) {
@@ -173,6 +182,8 @@ jobs:
               @Override
               public void onDisable() {
                   saveAll();
+                  Bukkit.getMessenger().unregisterIncomingPluginChannel(this, STATS_CHANNEL);
+                  Bukkit.getMessenger().unregisterOutgoingPluginChannel(this, STATS_CHANNEL);
                   removeOwnDisplays();
                   personalEntities.clear();
               }
@@ -180,32 +191,40 @@ jobs:
               @EventHandler
               public void onJoin(PlayerJoinEvent event) {
                   Player player = event.getPlayer();
+                  requestStats(player);
+
                   for (Map.Entry<Integer, HologramData> entry : holograms.entrySet()) {
                       if (entry.getValue().hasPlayerPlaceholder()) {
                           spawnPersonalFor(entry.getKey(), entry.getValue(), player);
                       }
                   }
+                  if (hasDynamicPlaceholder()) refreshDynamicTexts();
               }
 
               @EventHandler
               public void onQuit(PlayerQuitEvent event) {
                   UUID uuid = event.getPlayer().getUniqueId();
+
                   for (Map<UUID, List<UUID>> map : personalEntities.values()) {
-                      removeUuidEntities(map.remove(uuid));
+                      removeEntities(map.remove(uuid));
                   }
+                  if (hasDynamicPlaceholder()) refreshDynamicTexts();
               }
 
               private void removeOwnDisplays() {
                   for (World world : Bukkit.getWorlds()) {
                       for (TextDisplay display : world.getEntitiesByClass(TextDisplay.class)) {
-                          if (display.getPersistentDataContainer().has(idKey, PersistentDataType.INTEGER)) {
+                          if (display.getPersistentDataContainer()
+                                  .has(idKey, PersistentDataType.INTEGER)) {
                               display.remove();
                           }
                       }
                   }
+
                   for (Map<UUID, List<UUID>> map : personalEntities.values()) {
-                      for (List<UUID> ids : map.values()) removeUuidEntities(ids);
+                      for (List<UUID> ids : map.values()) removeEntities(ids);
                   }
+
                   personalEntities.clear();
               }
 
@@ -214,12 +233,14 @@ jobs:
 
                   File root = new File(getDataFolder(), "hologramy");
                   File[] dirs = root.listFiles(File::isDirectory);
+
                   if (dirs == null) return;
 
                   for (File dir : dirs) {
                       try {
                           int id = Integer.parseInt(dir.getName());
                           HologramData data = HologramData.load(dir);
+
                           if (data != null && !data.lines.isEmpty()) {
                               holograms.put(id, data);
                               spawnHologram(id, data);
@@ -232,6 +253,7 @@ jobs:
               private void spawnHologram(int id, HologramData data) {
                   if (data.hasPlayerPlaceholder()) {
                       personalEntities.put(id, new HashMap<>());
+
                       for (Player player : Bukkit.getOnlinePlayers()) {
                           spawnPersonalFor(id, data, player);
                       }
@@ -252,10 +274,10 @@ jobs:
                               data.x,
                               data.y - i * spacing,
                               data.z,
-                              data.lines.get(i),
-                              id,
-                              null
+                              replaceProxyPlaceholders(data.lines.get(i)),
+                              id
                       );
+
                       data.entityIds.add(display.getUniqueId());
                   }
 
@@ -271,21 +293,20 @@ jobs:
                   List<UUID> ids = new ArrayList<>();
 
                   for (int i = 0; i < data.lines.size(); i++) {
-                      String rendered = render(data.lines.get(i), viewer);
+                      String text = replacePlaceholders(data.lines.get(i), viewer);
 
                       TextDisplay display = spawnLine(
                               world,
                               data.x,
                               data.y - i * spacing,
                               data.z,
-                              rendered,
-                              id,
-                              viewer
+                              text,
+                              id
                       );
 
                       ids.add(display.getUniqueId());
 
-                      // Personal hologram: only this player sees this entity.
+                      // TextDisplay z %player% jest prywatny dla danego gracza.
                       for (Player other : Bukkit.getOnlinePlayers()) {
                           if (!other.getUniqueId().equals(viewer.getUniqueId())) {
                               other.hideEntity(this, display);
@@ -297,40 +318,118 @@ jobs:
                           .put(viewer.getUniqueId(), ids);
               }
 
-              private void removePersonalFor(int id, UUID viewer) {
-                  Map<UUID, List<UUID>> map = personalEntities.get(id);
-                  if (map == null) return;
-                  removeUuidEntities(map.remove(viewer));
-              }
-
               private TextDisplay spawnLine(
                       World world,
                       double x,
                       double y,
                       double z,
                       String text,
-                      int id,
-                      Player viewer
+                      int id
               ) {
-                  Location location = new Location(world, x, y, z);
+                  return world.spawn(
+                          new Location(world, x, y, z),
+                          TextDisplay.class,
+                          display -> {
+                              display.text(legacy.deserialize(text));
+                              display.setBillboard(Display.Billboard.CENTER);
+                              display.setShadowed(shadow);
+                              display.setSeeThrough(seeThrough);
+                              display.setLineWidth(lineWidth);
+                              display.setPersistent(true);
 
-                  return world.spawn(location, TextDisplay.class, display -> {
-                      display.text(legacy.deserialize(text));
-                      display.setBillboard(Display.Billboard.CENTER);
-                      display.setShadowed(shadow);
-                      display.setSeeThrough(seeThrough);
-                      display.setLineWidth(lineWidth);
-                      display.setPersistent(true);
-                      display.getPersistentDataContainer().set(
-                              idKey,
-                              PersistentDataType.INTEGER,
-                              id
-                      );
-                  });
+                              display.getPersistentDataContainer().set(
+                                      idKey,
+                                      PersistentDataType.INTEGER,
+                                      id
+                              );
+                          }
+                  );
               }
 
-              private String render(String text, Player player) {
-                  return text.replace("%player%", player.getName());
+              private String replacePlaceholders(String text, Player player) {
+                  String result = replaceProxyPlaceholders(text);
+                  result = result.replace("%player%", player.getName());
+                  result = replaceOnlinePlaceholder(result);
+                  return result;
+              }
+
+              private String replaceProxyPlaceholders(String text) {
+                  String result = text;
+                  result = result.replace("%online_LifeStealSMP%",
+                          lifeStealOnline + "/" + lifeStealMax);
+                  result = result.replace("%status_LifeStealSMP%", lifeStealStatus);
+                  result = result.replace("%blokada_LifeStealSMP%", lifeStealBlockade);
+                  return result;
+              }
+
+              private boolean hasDynamicPlaceholder() {
+                  for (HologramData data : holograms.values()) {
+                      for (String line : data.lines) {
+                          if (line.contains("%online_LifeStealSMP%") ||
+                              line.contains("%status_LifeStealSMP%") ||
+                              line.contains("%blokada_LifeStealSMP%") ||
+                              line.contains("%online%")) return true;
+                      }
+                  }
+                  return false;
+              }
+
+              private void requestStats(Player player) {
+                  ByteArrayDataOutput out = ByteStreams.newDataOutput();
+                  out.writeUTF("REQUEST");
+                  player.sendPluginMessage(this, STATS_CHANNEL, out.toByteArray());
+              }
+
+              private void receiveStats(byte[] message) {
+                  try {
+                      ByteArrayDataInput in = ByteStreams.newDataInput(message);
+                      if (!"STATS".equals(in.readUTF())) return;
+                      lifeStealOnline = Math.max(0, in.readInt());
+                      lifeStealMax = Math.max(0, in.readInt());
+                      lifeStealStatus = in.readUTF();
+                      lifeStealBlockade = in.readUTF();
+                      refreshDynamicTexts();
+                  } catch (Exception ignored) {
+                  }
+              }
+
+              private void refreshDynamicTexts() {
+                  for (Map.Entry<Integer, HologramData> entry : holograms.entrySet()) {
+                      refreshTexts(entry.getKey(), entry.getValue());
+                  }
+              }
+
+              private void refreshTexts(int id, HologramData data) {
+                  if (data.hasPlayerPlaceholder()) {
+                      Map<UUID, List<UUID>> map = personalEntities.get(id);
+                      if (map == null) return;
+
+                      for (Map.Entry<UUID, List<UUID>> viewerEntry : map.entrySet()) {
+                          Player viewer = Bukkit.getPlayer(viewerEntry.getKey());
+                          if (viewer == null || !viewer.isOnline()) continue;
+
+                          List<UUID> ids = viewerEntry.getValue();
+                          for (int i = 0; i < data.lines.size() && i < ids.size(); i++) {
+                              Entity entity = Bukkit.getEntity(ids.get(i));
+                              if (entity instanceof TextDisplay display) {
+                                  display.text(legacy.deserialize(replacePlaceholders(data.lines.get(i), viewer)));
+                              }
+                          }
+                      }
+                  } else {
+                      for (int i = 0; i < data.lines.size() && i < data.entityIds.size(); i++) {
+                          Entity entity = Bukkit.getEntity(data.entityIds.get(i));
+                          if (entity instanceof TextDisplay display) {
+                              display.text(legacy.deserialize(replaceProxyPlaceholders(
+                                      replaceOnlinePlaceholder(data.lines.get(i)))));
+                          }
+                      }
+                  }
+              }
+
+              private String replaceOnlinePlaceholder(String text) {
+                  return text.replace("%online%",
+                          Bukkit.getOnlinePlayers().size() + "/" + Bukkit.getMaxPlayers());
               }
 
               private void rebuild(int id, HologramData data) {
@@ -345,21 +444,29 @@ jobs:
                       Entity entity = Bukkit.getEntity(uuid);
                       if (entity != null) entity.remove();
                   }
+
                   data.entityIds.clear();
               }
 
               private void removePersonalForAll(int id) {
                   Map<UUID, List<UUID>> map = personalEntities.remove(id);
                   if (map == null) return;
-                  for (List<UUID> ids : map.values()) removeUuidEntities(ids);
+
+                  for (List<UUID> ids : map.values()) {
+                      removeEntities(ids);
+                  }
               }
 
-              private void removeEntities(HologramData data) {
-                  removeGlobalEntities(data);
+              private void removePersonalFor(int id, UUID player) {
+                  Map<UUID, List<UUID>> map = personalEntities.get(id);
+                  if (map == null) return;
+
+                  removeEntities(map.remove(player));
               }
 
-              private void removeUuidEntities(List<UUID> ids) {
+              private void removeEntities(List<UUID> ids) {
                   if (ids == null) return;
+
                   for (UUID uuid : ids) {
                       Entity entity = Bukkit.getEntity(uuid);
                       if (entity != null) entity.remove();
@@ -372,8 +479,7 @@ jobs:
 
                   Location p = player.getLocation();
 
-                  // Srodek bloku na wysokosci stop gracza.
-                  Location loc = new Location(
+                  Location location = new Location(
                           player.getWorld(),
                           p.getBlockX() + 0.5D,
                           p.getY(),
@@ -381,10 +487,10 @@ jobs:
                   );
 
                   HologramData data = new HologramData();
-                  data.world = loc.getWorld().getName();
-                  data.x = loc.getX();
-                  data.y = loc.getY();
-                  data.z = loc.getZ();
+                  data.world = location.getWorld().getName();
+                  data.x = location.getX();
+                  data.y = location.getY();
+                  data.z = location.getZ();
 
                   data.lines.add("&fID: " + id);
 
@@ -392,13 +498,16 @@ jobs:
                   spawnHologram(id, data);
                   data.save(getDataFolder(), id);
 
-                  player.sendMessage(ChatColor.GREEN + "Utworzono hologram ID: " + id);
+                  player.sendMessage(ChatColor.GREEN +
+                          "Utworzono hologram ID: " + id);
               }
 
               void move(Player player, int id) {
                   HologramData data = holograms.get(id);
+
                   if (data == null) {
-                      player.sendMessage(ChatColor.RED + "Hologram o ID " + id + " nie istnieje.");
+                      player.sendMessage(ChatColor.RED +
+                              "Hologram o ID " + id + " nie istnieje.");
                       return;
                   }
 
@@ -411,109 +520,126 @@ jobs:
 
                   rebuild(id, data);
 
-                  player.sendMessage(ChatColor.GREEN + "Przesunieto caly hologram " + id + ".");
+                  player.sendMessage(ChatColor.GREEN +
+                          "Przesunieto caly hologram " + id + ".");
               }
 
               void addLine(Player player, int id, String text) {
                   HologramData data = holograms.get(id);
+
                   if (data == null) {
-                      player.sendMessage(ChatColor.RED + "Hologram o ID " + id + " nie istnieje.");
+                      player.sendMessage(ChatColor.RED +
+                              "Hologram o ID " + id + " nie istnieje.");
                       return;
                   }
 
                   data.lines.add(text);
                   rebuild(id, data);
 
-                  player.sendMessage(ChatColor.GREEN + "Dodano linijke " + (data.lines.size() - 1) + ".");
+                  player.sendMessage(ChatColor.GREEN +
+                          "Dodano linijke " + (data.lines.size() - 1) + ".");
               }
 
               void rename(Player player, int id, int line, String text) {
                   HologramData data = holograms.get(id);
+
                   if (data == null) {
-                      player.sendMessage(ChatColor.RED + "Hologram o ID " + id + " nie istnieje.");
+                      player.sendMessage(ChatColor.RED +
+                              "Hologram o ID " + id + " nie istnieje.");
                       return;
                   }
 
-                  if (line < 0 || line >= data.lines.size()) {
-                      player.sendMessage(ChatColor.RED + "Linia musi byc od 0 do " + (data.lines.size() - 1) + ".");
-                      return;
-                  }
+                  if (!validLine(player, data, line)) return;
 
                   data.lines.set(line, text);
                   rebuild(id, data);
 
-                  player.sendMessage(ChatColor.GREEN + "Zmieniono linie " + line + ".");
+                  player.sendMessage(ChatColor.GREEN +
+                          "Zmieniono linie " + line + ".");
               }
 
               void removeLine(Player player, int id, int line) {
                   HologramData data = holograms.get(id);
+
                   if (data == null) {
-                      player.sendMessage(ChatColor.RED + "Hologram o ID " + id + " nie istnieje.");
+                      player.sendMessage(ChatColor.RED +
+                              "Hologram o ID " + id + " nie istnieje.");
                       return;
                   }
 
-                  if (line < 0 || line >= data.lines.size()) {
-                      player.sendMessage(ChatColor.RED + "Linia musi byc od 0 do " + (data.lines.size() - 1) + ".");
-                      return;
-                  }
+                  if (!validLine(player, data, line)) return;
 
                   if (data.lines.size() == 1) {
-                      player.sendMessage(ChatColor.RED + "To ostatnia linia. Usun caly hologram: /hologram usun " + id);
+                      player.sendMessage(ChatColor.RED +
+                              "To ostatnia linia. Usun caly hologram: /hologram usun " + id);
                       return;
                   }
 
                   data.lines.remove(line);
                   rebuild(id, data);
 
-                  player.sendMessage(ChatColor.GREEN + "Usunieto linie " + line + ".");
+                  player.sendMessage(ChatColor.GREEN +
+                          "Usunieto linie " + line + ".");
+              }
+
+              private boolean validLine(Player player, HologramData data, int line) {
+                  if (line < 0 || line >= data.lines.size()) {
+                      player.sendMessage(ChatColor.RED +
+                              "Linia musi byc od 0 do " +
+                              (data.lines.size() - 1) + ".");
+                      return false;
+                  }
+
+                  return true;
               }
 
               void removeHologram(Player player, int id) {
                   HologramData data = holograms.remove(id);
+
                   if (data == null) {
-                      player.sendMessage(ChatColor.RED + "Hologram o ID " + id + " nie istnieje.");
+                      player.sendMessage(ChatColor.RED +
+                              "Hologram o ID " + id + " nie istnieje.");
                       return;
                   }
 
-                  removeEntities(data);
+                  removeGlobalEntities(data);
                   removePersonalForAll(id);
 
                   File dir = new File(
                           new File(getDataFolder(), "hologramy"),
                           String.valueOf(id)
                   );
+
                   delete(dir);
 
-                  player.sendMessage(ChatColor.GREEN + "Usunieto hologram " + id + ".");
+                  player.sendMessage(ChatColor.GREEN +
+                          "Usunieto hologram " + id + ".");
               }
 
               void reload(Player player) {
                   removeOwnDisplays();
                   loadAll();
-                  player.sendMessage(ChatColor.GREEN + "Hologramy przeladowane.");
+
+                  player.sendMessage(ChatColor.GREEN +
+                          "Hologramy przeladowane.");
               }
 
               void list(Player player) {
-                  player.sendMessage(ChatColor.WHITE + "Liczba hologramow: " + holograms.size());
-
-                  if (!holograms.isEmpty()) {
-                      player.sendMessage(ChatColor.GRAY + "ID: " +
-                              holograms.keySet().stream()
-                                      .sorted()
-                                      .map(String::valueOf)
-                                      .reduce((a, b) -> a + ", " + b)
-                                      .orElse(""));
-                  }
+                  player.sendMessage(ChatColor.WHITE +
+                          "Liczba hologramow: " + holograms.size());
               }
 
               void info(Player player, int id) {
                   HologramData data = holograms.get(id);
+
                   if (data == null) {
-                      player.sendMessage(ChatColor.RED + "Hologram o ID " + id + " nie istnieje.");
+                      player.sendMessage(ChatColor.RED +
+                              "Hologram o ID " + id + " nie istnieje.");
                       return;
                   }
 
-                  player.sendMessage(ChatColor.WHITE + "Hologram " + id +
+                  player.sendMessage(ChatColor.WHITE +
+                          "Hologram " + id +
                           ChatColor.GRAY + " ma " +
                           ChatColor.WHITE + data.lines.size() +
                           ChatColor.GRAY + " linijek.");
@@ -536,16 +662,20 @@ jobs:
 
               private static void delete(File file) {
                   if (!file.exists()) return;
+
                   File[] children = file.listFiles();
+
                   if (children != null) {
                       for (File child : children) delete(child);
                   }
+
                   file.delete();
               }
 
               static final class HologramData {
                   String world;
                   double x, y, z;
+
                   final List<String> lines = new ArrayList<>();
                   final List<UUID> entityIds = new ArrayList<>();
 
@@ -553,20 +683,25 @@ jobs:
                       for (String line : lines) {
                           if (line.contains("%player%")) return true;
                       }
+
                       return false;
                   }
 
                   void save(File pluginFolder, int id) {
-                      File dir = new File(new File(pluginFolder, "hologramy"), String.valueOf(id));
+                      File dir = new File(
+                              new File(pluginFolder, "hologramy"),
+                              String.valueOf(id)
+                      );
+
                       dir.mkdirs();
 
                       YamlConfiguration cfg = new YamlConfiguration();
+
                       cfg.set("world", world);
                       cfg.set("x", x);
                       cfg.set("y", y);
                       cfg.set("z", z);
                       cfg.set("lines", lines);
-                      cfg.set("entities", entityIds.stream().map(UUID::toString).toList());
 
                       try {
                           cfg.save(new File(dir, "data.yml"));
@@ -576,12 +711,16 @@ jobs:
 
                   static HologramData load(File dir) {
                       File file = new File(dir, "data.yml");
+
                       if (!file.exists()) return null;
 
-                      YamlConfiguration cfg = YamlConfiguration.loadConfiguration(file);
+                      YamlConfiguration cfg =
+                              YamlConfiguration.loadConfiguration(file);
+
                       HologramData data = new HologramData();
 
                       data.world = cfg.getString("world");
+
                       if (data.world == null) return null;
 
                       data.x = cfg.getDouble("x");
@@ -589,14 +728,18 @@ jobs:
                       data.z = cfg.getDouble("z");
 
                       List<String> lines = cfg.getStringList("lines");
+
                       if (lines.isEmpty()) return null;
+
                       data.lines.addAll(lines);
 
                       return data;
                   }
               }
 
-              static final class HologramCommand implements CommandExecutor, TabCompleter {
+              static final class HologramCommand
+                      implements CommandExecutor, TabCompleter {
+
                   private final HologramPlugin plugin;
 
                   HologramCommand(HologramPlugin plugin) {
@@ -616,7 +759,8 @@ jobs:
                       }
 
                       if (!player.hasPermission("hologram.admin")) {
-                          player.sendMessage(ChatColor.RED + "Brak uprawnien.");
+                          player.sendMessage(ChatColor.RED +
+                                  "Brak uprawnien.");
                           return true;
                       }
 
@@ -627,107 +771,186 @@ jobs:
 
                       String sub = args[0].toLowerCase(Locale.ROOT);
 
-                      if (sub.equals("stwor") || sub.equals("stworz") || sub.equals("stwórz")) {
-                          if (args.length == 1) plugin.create(player);
-                          else player.sendMessage(ChatColor.RED + "Uzycie: /hologram stworz");
+                      if (sub.equals("stwor") ||
+                          sub.equals("stworz") ||
+                          sub.equals("stwórz")) {
+
+                          if (args.length == 1) {
+                              plugin.create(player);
+                          } else {
+                              player.sendMessage(ChatColor.RED +
+                                      "Uzycie: /hologram stworz");
+                          }
+
+                          return true;
+                      }
+
+                      if (sub.equals("help") || sub.equals("pomoc")) {
+                          help(player);
                           return true;
                       }
 
                       if (sub.equals("list")) {
-                          plugin.list(player);
+                          if (args.length == 1) {
+                              plugin.list(player);
+                              return true;
+                          }
+
+                          if (args.length == 2) {
+                              Integer id = integer(args[1]);
+
+                              if (id != null) {
+                                  plugin.info(player, id);
+                              } else {
+                                  player.sendMessage(ChatColor.RED +
+                                          "ID musi byc liczba.");
+                              }
+
+                              return true;
+                          }
+
+                          player.sendMessage(ChatColor.RED +
+                                  "Uzycie: /hologram list [id]");
                           return true;
                       }
 
                       if (sub.equals("reload")) {
-                          plugin.reload(player);
+                          if (args.length == 1) {
+                              plugin.reload(player);
+                          } else {
+                              player.sendMessage(ChatColor.RED +
+                                      "Uzycie: /hologram reload");
+                          }
+
                           return true;
                       }
 
                       if (sub.equals("usun") || sub.equals("usuń")) {
                           if (args.length == 2) {
                               Integer id = integer(args[1]);
-                              if (id != null) plugin.removeHologram(player, id);
-                              else player.sendMessage(ChatColor.RED + "ID musi byc liczba.");
+
+                              if (id != null) {
+                                  plugin.removeHologram(player, id);
+                              } else {
+                                  player.sendMessage(ChatColor.RED +
+                                          "ID musi byc liczba.");
+                              }
+
                               return true;
                           }
 
-                          if (args.length == 4 && args[2].equalsIgnoreCase("linijka")) {
+                          if (args.length == 4 &&
+                              args[2].equalsIgnoreCase("linijka")) {
+
                               Integer id = integer(args[1]);
                               Integer line = integer(args[3]);
-                              if (id != null && line != null) plugin.removeLine(player, id, line);
+
+                              if (id != null && line != null) {
+                                  plugin.removeLine(player, id, line);
+                              } else {
+                                  player.sendMessage(ChatColor.RED +
+                                          "ID i linia musza byc liczbami.");
+                              }
+
                               return true;
                           }
 
-                          player.sendMessage(ChatColor.RED + "Uzycie: /hologram usun <id> lub /hologram usun <id> linijka <numer>");
-                          return true;
-                      }
-
-                      Integer directId = integer(args[0]);
-                      if (directId != null && args.length == 1) {
-                          plugin.info(player, directId);
+                          player.sendMessage(ChatColor.RED +
+                                  "Uzycie: /hologram usun <id> [linijka <linia>]");
                           return true;
                       }
 
                       if (sub.equals("wybierz")) {
                           if (args.length < 3) {
-                              player.sendMessage(ChatColor.RED + "Uzycie: /hologram wybierz <id> <akcja> ...");
+                              player.sendMessage(ChatColor.RED +
+                                      "Uzycie: /hologram wybierz <id> <akcja>");
                               return true;
                           }
 
                           Integer id = integer(args[1]);
+
                           if (id == null) {
-                              player.sendMessage(ChatColor.RED + "ID musi byc liczba.");
+                              player.sendMessage(ChatColor.RED +
+                                      "ID musi byc liczba.");
                               return true;
                           }
 
                           String action = args[2].toLowerCase(Locale.ROOT);
 
                           if (action.equals("przesun")) {
-                              if (args.length != 3) {
-                                  player.sendMessage(ChatColor.RED + "Uzycie: /hologram wybierz <id> przesun");
-                                  return true;
+                              if (args.length == 3) {
+                                  plugin.move(player, id);
+                              } else {
+                                  player.sendMessage(ChatColor.RED +
+                                          "Uzycie: /hologram wybierz <id> przesun");
                               }
-                              plugin.move(player, id);
+
                               return true;
                           }
 
-                          if (action.equals("dodaj_linijke") || action.equals("dodaj_linie")) {
+                          if (action.equals("dodaj_linijke") ||
+                              action.equals("dodaj_linie")) {
+
                               if (args.length < 4) {
-                                  player.sendMessage(ChatColor.RED + "Uzycie: /hologram wybierz <id> dodaj_linijke <tekst>");
+                                  player.sendMessage(ChatColor.RED +
+                                          "Uzycie: /hologram wybierz <id> dodaj_linijke <tekst>");
                                   return true;
                               }
+
                               plugin.addLine(player, id, join(args, 3));
                               return true;
                           }
 
                           if (action.equals("zmien_nazwe")) {
                               if (args.length < 5) {
-                                  player.sendMessage(ChatColor.RED + "Uzycie: /hologram wybierz <id> zmien_nazwe <linia> <tekst>");
+                                  player.sendMessage(ChatColor.RED +
+                                          "Uzycie: /hologram wybierz <id> zmien_nazwe <linia> <tekst>");
                                   return true;
                               }
 
                               Integer line = integer(args[3]);
+
                               if (line == null) {
-                                  player.sendMessage(ChatColor.RED + "Numer linii musi byc liczba.");
+                                  player.sendMessage(ChatColor.RED +
+                                          "Numer linii musi byc liczba.");
                                   return true;
                               }
 
-                              plugin.rename(player, id, line, join(args, 4));
+                              plugin.rename(
+                                      player,
+                                      id,
+                                      line,
+                                      join(args, 4)
+                              );
+
                               return true;
                           }
 
                           if (action.equals("usun")) {
                               if (args.length != 4) {
-                                  player.sendMessage(ChatColor.RED + "Uzycie: /hologram wybierz <id> usun <linia>");
+                                  player.sendMessage(ChatColor.RED +
+                                          "Uzycie: /hologram wybierz <id> usun <linia>");
                                   return true;
                               }
 
                               Integer line = integer(args[3]);
-                              if (line != null) plugin.removeLine(player, id, line);
+
+                              if (line != null) {
+                                  plugin.removeLine(player, id, line);
+                              }
+
                               return true;
                           }
 
-                          player.sendMessage(ChatColor.RED + "Nieznana akcja.");
+                          player.sendMessage(ChatColor.RED +
+                                  "Nieznana akcja.");
+                          return true;
+                      }
+
+                      Integer directId = integer(args[0]);
+
+                      if (directId != null && args.length == 1) {
+                          plugin.info(player, directId);
                           return true;
                       }
 
@@ -736,15 +959,71 @@ jobs:
                   }
 
                   private void help(Player player) {
-                      player.sendMessage(ChatColor.WHITE + "/hologram stworz");
-                      player.sendMessage(ChatColor.WHITE + "/hologram wybierz <id> przesun");
-                      player.sendMessage(ChatColor.WHITE + "/hologram wybierz <id> zmien_nazwe <linia> <tekst>");
-                      player.sendMessage(ChatColor.WHITE + "/hologram wybierz <id> dodaj_linijke <tekst>");
-                      player.sendMessage(ChatColor.WHITE + "/hologram wybierz <id> usun <linia>");
-                      player.sendMessage(ChatColor.WHITE + "/hologram usun <id>");
-                      player.sendMessage(ChatColor.WHITE + "/hologram reload");
-                      player.sendMessage(ChatColor.WHITE + "/hologram list");
-                      player.sendMessage(ChatColor.WHITE + "/hologram <id>");
+                      player.sendMessage(ChatColor.WHITE +
+                              "===== HologramPlugin =====");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram stworz " +
+                              ChatColor.GRAY + "- tworzy hologram");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram wybierz <id> przesun " +
+                              ChatColor.GRAY + "- przesuwa caly hologram");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram wybierz <id> dodaj_linijke <tekst> " +
+                              ChatColor.GRAY + "- dodaje linie");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram wybierz <id> zmien_nazwe <linia> <tekst> " +
+                              ChatColor.GRAY + "- zmienia linie");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram wybierz <id> usun <linia> " +
+                              ChatColor.GRAY + "- usuwa linie");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram usun <id> " +
+                              ChatColor.GRAY + "- usuwa hologram");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram list " +
+                              ChatColor.GRAY + "- pokazuje liczbe hologramow");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram list <id> " +
+                              ChatColor.GRAY + "- pokazuje liczbe linii");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram reload " +
+                              ChatColor.GRAY + "- przeladowuje hologramy");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "/hologram help " +
+                              ChatColor.GRAY + "- pokazuje pomoc");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "Placeholdery:");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "%player% " +
+                              ChatColor.GRAY + "- nick gracza");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "%online% " +
+                              ChatColor.GRAY + "- gracze na aktualnym hubie");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "%online_LifeStealSMP% " +
+                              ChatColor.GRAY + "- liczba graczy LifeStealSMP");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "%status_LifeStealSMP% " +
+                              ChatColor.GRAY + "- status LifeStealSMP");
+
+                      player.sendMessage(ChatColor.WHITE +
+                              "%blokada_LifeStealSMP% " +
+                              ChatColor.GRAY + "- stan blokady LifeStealSMP");
                   }
 
                   @Override
@@ -754,39 +1033,57 @@ jobs:
                           String alias,
                           String[] args
                   ) {
+                      // Celowo NIE pokazujemy ID po samym /hologram.
                       if (args.length == 1) {
-                          List<String> out = new ArrayList<>(
-                                  List.of("stworz", "wybierz", "usun", "reload", "list")
+                          return filter(
+                                  List.of(
+                                          "stworz",
+                                          "wybierz",
+                                          "usun",
+                                          "reload",
+                                          "list",
+                                          "help"
+                                  ),
+                                  args[0]
                           );
-                          plugin.ids().forEach(id -> out.add(String.valueOf(id)));
-                          return filter(out, args[0]);
                       }
 
                       if (args.length == 2 &&
-                              args[0].equalsIgnoreCase("wybierz")) {
+                          args[0].equalsIgnoreCase("wybierz")) {
+
                           return filter(
-                                  plugin.ids().stream().map(String::valueOf).toList(),
+                                  plugin.ids().stream()
+                                          .map(String::valueOf)
+                                          .toList(),
                                   args[1]
                           );
                       }
 
                       if (args.length == 3 &&
-                              args[0].equalsIgnoreCase("wybierz")) {
+                          args[0].equalsIgnoreCase("wybierz")) {
+
                           return filter(
-                                  List.of("przesun", "zmien_nazwe", "dodaj_linijke", "usun"),
+                                  List.of(
+                                          "przesun",
+                                          "zmien_nazwe",
+                                          "dodaj_linijke",
+                                          "usun"
+                                  ),
                                   args[2]
                           );
                       }
 
                       if (args.length == 4 &&
-                              args[0].equalsIgnoreCase("wybierz") &&
-                              (args[2].equalsIgnoreCase("zmien_nazwe")
-                                      || args[2].equalsIgnoreCase("usun"))) {
+                          args[0].equalsIgnoreCase("wybierz") &&
+                          (args[2].equalsIgnoreCase("zmien_nazwe") ||
+                           args[2].equalsIgnoreCase("usun"))) {
 
                           Integer id = integer(args[1]);
+
                           if (id == null) return List.of();
 
                           List<String> lines = new ArrayList<>();
+
                           for (int i = 0; i < plugin.count(id); i++) {
                               lines.add(String.valueOf(i));
                           }
@@ -795,22 +1092,27 @@ jobs:
                       }
 
                       if (args.length == 2 &&
-                              (args[0].equalsIgnoreCase("usun")
-                                      || args[0].equalsIgnoreCase("usuń"))) {
+                          (args[0].equalsIgnoreCase("usun") ||
+                           args[0].equalsIgnoreCase("usuń"))) {
+
                           return filter(
-                                  plugin.ids().stream().map(String::valueOf).toList(),
+                                  plugin.ids().stream()
+                                          .map(String::valueOf)
+                                          .toList(),
                                   args[1]
                           );
                       }
 
                       if (args.length == 4 &&
-                              args[0].equalsIgnoreCase("usun") &&
-                              args[2].equalsIgnoreCase("linijka")) {
+                          args[0].equalsIgnoreCase("usun") &&
+                          args[2].equalsIgnoreCase("linijka")) {
 
                           Integer id = integer(args[1]);
+
                           if (id == null) return List.of();
 
                           List<String> lines = new ArrayList<>();
+
                           for (int i = 0; i < plugin.count(id); i++) {
                               lines.add(String.valueOf(i));
                           }
@@ -818,18 +1120,34 @@ jobs:
                           return filter(lines, args[3]);
                       }
 
+                      if (args.length == 2 &&
+                          args[0].equalsIgnoreCase("list")) {
+
+                          return filter(
+                                  plugin.ids().stream()
+                                          .map(String::valueOf)
+                                          .toList(),
+                                  args[1]
+                          );
+                      }
+
                       return List.of();
                   }
 
-                  private static List<String> filter(List<String> values, String input) {
-                      List<String> out = new ArrayList<>();
+                  private static List<String> filter(
+                          List<String> values,
+                          String input
+                  ) {
+                      List<String> result = new ArrayList<>();
+
                       for (String value : values) {
                           if (value.toLowerCase(Locale.ROOT)
                                   .startsWith(input.toLowerCase(Locale.ROOT))) {
-                              out.add(value);
+                              result.add(value);
                           }
                       }
-                      return out;
+
+                      return result;
                   }
 
                   private static Integer integer(String value) {
@@ -861,13 +1179,13 @@ jobs:
         run: |
           set -e
           mkdir -p release
-          cp target/HologramPlugin-1.1.0.jar release/HologramPlugin.jar
+          cp target/HologramPlugin-1.3.1.jar release/HologramPlugin.jar
           cd release
-          zip -9 ../HologramPlugin-FINAL.zip HologramPlugin.jar
+          zip -9 ../HologramPlugin-BRIDGE.zip HologramPlugin.jar
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: HologramPlugin-FINAL
-          path: HologramPlugin-FINAL.zip
+          name: HologramPlugin-BRIDGE
+          path: HologramPlugin-BRIDGE.zip
           if-no-files-found: error
