@@ -3,82 +3,110 @@ name: Build Hub2Protection
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
 
 jobs:
   build:
+    name: Build Hub2Protection
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
       - name: Create Maven project
+        shell: bash
         run: |
+          set -e
+
           mkdir -p hub2protection/src/main/java/pl/reniferek/hub2protection
+          mkdir -p hub2protection/src/main/resources
 
           cat > hub2protection/pom.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
           <project xmlns="http://maven.apache.org/POM/4.0.0"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-            <modelVersion>4.0.0</modelVersion>
+              <modelVersion>4.0.0</modelVersion>
 
-            <groupId>pl.reniferek</groupId>
-            <artifactId>Hub2Protection</artifactId>
-            <version>1.0.0</version>
+              <groupId>pl.reniferek</groupId>
+              <artifactId>Hub2Protection</artifactId>
+              <version>1.0.0</version>
+              <packaging>jar</packaging>
 
-            <properties>
-              <maven.compiler.release>21</maven.compiler.release>
-              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-            </properties>
+              <properties>
+                  <maven.compiler.source>21</maven.compiler.source>
+                  <maven.compiler.target>21</maven.compiler.target>
+                  <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+              </properties>
 
-            <repositories>
-              <repository>
-                <id>papermc</id>
-                <url>https://repo.papermc.io/repository/maven-public/</url>
-              </repository>
-            </repositories>
+              <repositories>
+                  <repository>
+                      <id>papermc</id>
+                      <url>https://repo.papermc.io/repository/maven-public/</url>
+                  </repository>
+              </repositories>
 
-            <dependencies>
-              <dependency>
-                <groupId>io.papermc.paper</groupId>
-                <artifactId>paper-api</artifactId>
-                <version>1.21.4-R0.1-SNAPSHOT</version>
-                <scope>provided</scope>
-              </dependency>
-            </dependencies>
+              <dependencies>
+                  <dependency>
+                      <groupId>io.papermc.paper</groupId>
+                      <artifactId>paper-api</artifactId>
+                      <version>1.21.4-R0.1-SNAPSHOT</version>
+                      <scope>provided</scope>
+                  </dependency>
+              </dependencies>
 
-            <build>
-              <plugins>
-                <plugin>
-                  <groupId>org.apache.maven.plugins</groupId>
-                  <artifactId>maven-compiler-plugin</artifactId>
-                  <version>3.13.0</version>
-                  <configuration>
-                    <release>21</release>
-                  </configuration>
-                </plugin>
-              </plugins>
-            </build>
+              <build>
+                  <plugins>
+                      <plugin>
+                          <groupId>org.apache.maven.plugins</groupId>
+                          <artifactId>maven-compiler-plugin</artifactId>
+                          <version>3.13.0</version>
+                          <configuration>
+                              <release>21</release>
+                          </configuration>
+                      </plugin>
+
+                      <plugin>
+                          <groupId>org.apache.maven.plugins</groupId>
+                          <artifactId>maven-jar-plugin</artifactId>
+                          <version>3.4.2</version>
+                          <configuration>
+                              <archive>
+                                  <manifestEntries>
+                                      <Built-By>GitHub Actions</Built-By>
+                                  </manifestEntries>
+                              </archive>
+                          </configuration>
+                      </plugin>
+                  </plugins>
+              </build>
           </project>
           EOF
 
-          cat > hub2protection/src/main/resources.yml <<'EOF'
+          cat > hub2protection/src/main/resources/plugin.yml <<'EOF'
           name: Hub2Protection
-          version: 1.1.0
+          version: 1.0.0
           main: pl.reniferek.hub2protection.Hub2Protection
           api-version: '1.21'
           author: Reniferek
-          description: Hub2 protection and spawn teleport
+          description: Ochrona hub2, brak glodu i obrazen oraz teleport na spawn.
           EOF
-
-          mkdir -p hub2protection/src/main/resources
-          mv hub2protection/src/main/resources.yml hub2protection/src/main/resources/plugin.yml
 
           cat > hub2protection/src/main/resources/config.yml <<'EOF'
           world: "hub2"
           hunger: true
           hearts: true
           teleport-on-join: true
+
           spawn:
             x: 0.5
             y: 66.0
@@ -90,6 +118,7 @@ jobs:
           cat > hub2protection/src/main/java/pl/reniferek/hub2protection/Hub2Protection.java <<'EOF'
           package pl.reniferek.hub2protection;
 
+          import org.bukkit.Bukkit;
           import org.bukkit.Location;
           import org.bukkit.World;
           import org.bukkit.entity.Player;
@@ -103,221 +132,115 @@ jobs:
           import org.bukkit.plugin.java.JavaPlugin;
 
           public final class Hub2Protection extends JavaPlugin implements Listener {
+
               private String worldName;
-              private boolean hunger;
-              private boolean hearts;
+              private boolean noHunger;
+              private boolean noDamage;
               private boolean teleportOnJoin;
-              private double x, y, z;
-              private float yaw, pitch;
+
+              private double spawnX;
+              private double spawnY;
+              private double spawnZ;
+              private float spawnYaw;
+              private float spawnPitch;
 
               @Override
               public void onEnable() {
                   saveDefaultConfig();
                   loadSettings();
-                  getServer().getPluginManager().registerEvents(this, this);
+
+                  Bukkit.getPluginManager().registerEvents(this, this);
+
+                  getLogger().info("Hub2Protection wlaczony.");
               }
 
               private void loadSettings() {
                   worldName = getConfig().getString("world", "hub2");
-                  hunger = getConfig().getBoolean("hunger", true);
-                  hearts = getConfig().getBoolean("hearts", true);
+                  noHunger = getConfig().getBoolean("hunger", true);
+                  noDamage = getConfig().getBoolean("hearts", true);
                   teleportOnJoin = getConfig().getBoolean("teleport-on-join", true);
-                  x = getConfig().getDouble("spawn.x", 0.5);
-                  y = getConfig().getDouble("spawn.y", 66.0);
-                  z = getConfig().getDouble("spawn.z", -20.5);
-                  yaw = (float) getConfig().getDouble("spawn.yaw", 0.0);
-                  pitch = (float) getConfig().getDouble("spawn.pitch", 0.0);
+
+                  spawnX = getConfig().getDouble("spawn.x", 0.5);
+                  spawnY = getConfig().getDouble("spawn.y", 66.0);
+                  spawnZ = getConfig().getDouble("spawn.z", -20.5);
+                  spawnYaw = (float) getConfig().getDouble("spawn.yaw", 0.0);
+                  spawnPitch = (float) getConfig().getDouble("spawn.pitch", 0.0);
               }
 
-              private boolean isHub(Player player) {
-                  return player.getWorld().getName().equals(worldName);
+              private boolean isHub2(Player player) {
+                  return player.getWorld().getName().equalsIgnoreCase(worldName);
               }
 
-              private Location spawn(Player player) {
-                  World world = player.getWorld();
-                  return new Location(world, x, y, z, yaw, pitch);
-              }
-
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
               public void onFood(FoodLevelChangeEvent event) {
-                  if (hunger && event.getEntity() instanceof Player player && isHub(player)) {
+                  if (!noHunger || !(event.getEntity() instanceof Player player)) {
+                      return;
+                  }
+
+                  if (isHub2(player)) {
                       event.setCancelled(true);
                   }
               }
 
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
               public void onDamage(EntityDamageEvent event) {
-                  if (hearts && event.getEntity() instanceof Player player && isHub(player)) {
+                  if (!noDamage || !(event.getEntity() instanceof Player player)) {
+                      return;
+                  }
+
+                  if (isHub2(player)) {
                       event.setCancelled(true);
                   }
               }
 
               @EventHandler
-              public void onWorldChange(PlayerChangedWorldEvent event) {
-                  if (teleportOnJoin && isHub(event.getPlayer())) {
-                      event.getPlayer().teleport(spawn(event.getPlayer()));
+              public void onChangedWorld(PlayerChangedWorldEvent event) {
+                  if (!teleportOnJoin) {
+                      return;
                   }
+
+                  Player player = event.getPlayer();
+
+                  Bukkit.getScheduler().runTask(this, () -> {
+                      if (isHub2(player)) {
+                          teleportToSpawn(player);
+                      }
+                  });
               }
 
               @EventHandler
               public void onJoin(PlayerJoinEvent event) {
-                  Player player = event.getPlayer();
-                  if (teleportOnJoin && isHub(player)) {
-                      getServer().getScheduler().runTask(this, () -> {
-                          if (player.isOnline() && isHub(player)) player.teleport(spawn(player));
-                      });
+                  if (!teleportOnJoin) {
+                      return;
                   }
-              }
-          }
-          EOFHub2Protection
 
-on:
-  workflow_dispatch:
-  push:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Create Maven project
-        run: |
-          mkdir -p hub2protection/src/main/java/pl/reniferek/hub2protection
-
-          cat > hub2protection/pom.xml <<'EOF'
-          <project xmlns="http://maven.apache.org/POM/4.0.0"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-            <modelVersion>4.0.0</modelVersion>
-
-            <groupId>pl.reniferek</groupId>
-            <artifactId>Hub2Protection</artifactId>
-            <version>1.0.0</version>
-
-            <properties>
-              <maven.compiler.release>21</maven.compiler.release>
-              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-            </properties>
-
-            <repositories>
-              <repository>
-                <id>papermc</id>
-                <url>https://repo.papermc.io/repository/maven-public/</url>
-              </repository>
-            </repositories>
-
-            <dependencies>
-              <dependency>
-                <groupId>io.papermc.paper</groupId>
-                <artifactId>paper-api</artifactId>
-                <version>1.21.4-R0.1-SNAPSHOT</version>
-                <scope>provided</scope>
-              </dependency>
-            </dependencies>
-
-            <build>
-              <plugins>
-                <plugin>
-                  <groupId>org.apache.maven.plugins</groupId>
-                  <artifactId>maven-compiler-plugin</artifactId>
-                  <version>3.13.0</version>
-                  <configuration>
-                    <release>21</release>
-                  </configuration>
-                </plugin>
-              </plugins>
-            </build>
-          </project>
-          EOF
-
-          cat > hub2protection/src/main/resources.yml <<'EOF'
-          name: Hub2Protection
-          version: 1.1.0
-          main: pl.reniferek.hub2protection.Hub2Protection
-          api-version: '1.21'
-          author: Reniferek
-          description: Hub2 protection and spawn teleport
-          EOF
-
-          mkdir -p hub2protection/src/main/resources
-          mv hub2protection/src/main/resources.yml hub2protection/src/main/resources/plugin.yml
-
-          cat > hub2protection/src/main/resources/config.yml <<'EOF'
-          world: "hub2"
-          hunger: true
-          hearts: true
-          teleport-on-join: true
-          spawn:
-            x: 0.5
-            y: 66.0
-            z: -20.5
-            yaw: 0.0
-            pitch: 0.0
-          EOF
-
-          cat > hub2protection/src/main/java/pl/reniferek/hub2protection/Hub2Protection.java <<'EOF'
-          package pl.reniferek.hub2protection;
-
-          import org.bukkit.Location;
-          import org.bukkit.World;
-          import org.bukkit.entity.Player;
-          import org.bukkit.event.EventHandler;
-          import org.bukkit.event.EventPriority;
-          import org.bukkit.event.Listener;
-          import org.bukkit.event.entity.FoodLevelChangeEvent;
-          import org.bukkit.event.player.PlayerChangedWorldEvent;
-          import org.bukkit.event.player.PlayerJoinEvent;
-          import org.bukkit.plugin.java.JavaPlugin;
-
-          public final class Hub2Protection extends JavaPlugin implements Listener {
-
-              private static final String WORLD_NAME = "hub2";
-
-              private Location getHubSpawn(World world) {
-                  return new Location(world, 0.5, 66.0, -20.5, 0.0f, 0.0f);
-              }
-
-              @Override
-              public void onEnable() {
-                  getServer().getPluginManager().registerEvents(this, this);
-              }
-
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
-              public void onFoodLevelChange(FoodLevelChangeEvent event) {
-                  if (event.getEntity() instanceof Player player
-                          && player.getWorld().getName().equals(WORLD_NAME)) {
-                      event.setCancelled(true);
-                  }
-              }
-
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
-              public void onDamage(EntityDamageEvent event) {
-                  if (event.getEntity() instanceof Player player
-                          && player.getWorld().getName().equals(WORLD_NAME)) {
-                      event.setCancelled(true);
-                  }
-              }
-
-              @EventHandler
-              public void onWorldChange(PlayerChangedWorldEvent event) {
                   Player player = event.getPlayer();
 
-                  if (player.getWorld().getName().equals(WORLD_NAME)) {
-                      player.teleport(getHubSpawn(player.getWorld()));
-                  }
+                  Bukkit.getScheduler().runTask(this, () -> {
+                      if (isHub2(player)) {
+                          teleportToSpawn(player);
+                      }
+                  });
               }
 
-              @EventHandler
-              public void onJoin(PlayerJoinEvent event) {
-                  Player player = event.getPlayer();
+              private void teleportToSpawn(Player player) {
+                  World world = Bukkit.getWorld(worldName);
 
-                  if (player.getWorld().getName().equals(WORLD_NAME)) {
-                      getServer().getScheduler().runTask(this, () ->
-                              player.teleport(getHubSpawn(player.getWorld())));
+                  if (world == null) {
+                      getLogger().warning("Nie znaleziono swiata: " + worldName);
+                      return;
                   }
+
+                  Location location = new Location(
+                          world,
+                          spawnX,
+                          spawnY,
+                          spawnZ,
+                          spawnYaw,
+                          spawnPitch
+                  );
+
+                  player.teleport(location);
               }
           }
           EOF
@@ -326,13 +249,16 @@ jobs:
         working-directory: hub2protection
         run: mvn -B clean package
 
-      - name: Copy JAR
+      - name: Prepare plugin artifact
+        shell: bash
         run: |
-          mkdir -p output
-          cp hub2protection/target/Hub2Protection-1.0.0.jar output/Hub2Protection.jar
+          set -e
+          mkdir -p artifacts
+          cp hub2protection/target/Hub2Protection-1.0.0.jar artifacts/Hub2Protection.jar
 
-      - name: Upload JAR
+      - name: Upload Hub2Protection.jar
         uses: actions/upload-artifact@v4
         with:
-          name: Hub2Protection-JAR
-          path: output/Hub2Protection.jar
+          name: Hub2Protection
+          path: artifacts/Hub2Protection.jar
+          if-no-files-found: error
