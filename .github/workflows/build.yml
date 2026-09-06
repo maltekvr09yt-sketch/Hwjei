@@ -1,4 +1,4 @@
-name: Build ServerTeleport
+name: Build ServerTeleport Paper + Velocity
 
 on:
   workflow_dispatch:
@@ -22,6 +22,10 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # =========================================================
+      # PAPER
+      # =========================================================
+
       - name: Create Paper project
         shell: bash
         run: |
@@ -40,7 +44,7 @@ jobs:
 
               <groupId>pl.reniferek</groupId>
               <artifactId>ServerTeleport-Paper</artifactId>
-              <version>1.0.0</version>
+              <version>1.1.0</version>
 
               <properties>
                   <maven.compiler.release>21</maven.compiler.release>
@@ -65,6 +69,7 @@ jobs:
 
               <build>
                   <plugins>
+
                       <plugin>
                           <groupId>org.apache.maven.plugins</groupId>
                           <artifactId>maven-compiler-plugin</artifactId>
@@ -79,6 +84,7 @@ jobs:
                           <artifactId>maven-jar-plugin</artifactId>
                           <version>3.4.2</version>
                       </plugin>
+
                   </plugins>
               </build>
 
@@ -87,11 +93,11 @@ jobs:
 
           cat > paper/src/main/resources/plugin.yml <<'EOF'
           name: ServerTeleport
-          version: 1.0.0
+          version: 1.1.0
           main: pl.reniferek.servertp.ServerTeleport
           api-version: '1.21'
           author: Reniferek
-          description: Bardzo lekki teleport Paper -> Velocity.
+          description: Lekki system Paper -> Velocity.
           EOF
 
           cat > paper/src/main/resources/config.yml <<'EOF'
@@ -114,11 +120,13 @@ jobs:
 
           import com.google.common.io.ByteArrayDataOutput;
           import com.google.common.io.ByteStreams;
+
           import org.bukkit.entity.Player;
           import org.bukkit.event.EventHandler;
           import org.bukkit.event.EventPriority;
           import org.bukkit.event.Listener;
           import org.bukkit.event.player.PlayerMoveEvent;
+          import org.bukkit.event.player.PlayerQuitEvent;
           import org.bukkit.plugin.java.JavaPlugin;
 
           import java.util.HashSet;
@@ -170,15 +178,13 @@ jobs:
                           true
                   );
 
-                  getServer()
-                          .getMessenger()
+                  getServer().getMessenger()
                           .registerOutgoingPluginChannel(
                                   this,
                                   CHANNEL
                           );
 
-                  getServer()
-                          .getPluginManager()
+                  getServer().getPluginManager()
                           .registerEvents(this, this);
               }
 
@@ -187,8 +193,7 @@ jobs:
 
                   insidePlayers.clear();
 
-                  getServer()
-                          .getMessenger()
+                  getServer().getMessenger()
                           .unregisterOutgoingPluginChannel(
                                   this,
                                   CHANNEL
@@ -201,57 +206,87 @@ jobs:
               )
               public void onMove(PlayerMoveEvent event) {
 
+                  /*
+                   * Najważniejsza optymalizacja.
+                   * Obracanie kamerą bez zmiany bloku
+                   * kończy się natychmiast.
+                   */
                   if (!event.hasChangedBlock()) {
                       return;
                   }
 
-                  Player player = event.getPlayer();
+                  final Player player = event.getPlayer();
 
-                  int x = event.getTo().getBlockX();
-                  int y = event.getTo().getBlockY();
-                  int z = event.getTo().getBlockZ();
+                  final int x = event.getTo().getBlockX();
+                  final int y = event.getTo().getBlockY();
+                  final int z = event.getTo().getBlockZ();
 
-                  boolean inside =
-                          x >= minX &&
-                          x <= maxX &&
-                          y >= minY &&
-                          y <= maxY &&
-                          z == targetZ;
+                  final UUID uuid = player.getUniqueId();
 
-                  UUID uuid = player.getUniqueId();
+                  /*
+                   * Sprawdzenie obszaru portalu.
+                   */
+                  if (
+                          x < minX ||
+                          x > maxX ||
+                          y < minY ||
+                          y > maxY ||
+                          z != targetZ
+                  ) {
 
-                  if (!inside) {
                       if (oncePerEntry) {
                           insidePlayers.remove(uuid);
                       }
+
                       return;
                   }
 
-                  if (oncePerEntry && !insidePlayers.add(uuid)) {
+                  /*
+                   * Opcjonalne wymaganie powietrza.
+                   */
+                  if (
+                          requireAir &&
+                          !event.getTo().getBlock().isEmpty()
+                  ) {
                       return;
                   }
 
-                  if (requireAir) {
-                      if (!player.getLocation().getBlock().isEmpty()) {
-                          return;
-                      }
+                  /*
+                   * Tylko jedno uruchomienie
+                   * podczas jednego wejścia.
+                   */
+                  if (
+                          oncePerEntry &&
+                          !insidePlayers.add(uuid)
+                  ) {
+                      return;
                   }
 
                   sendTeleportRequest(player);
               }
 
+              @EventHandler
+              public void onQuit(PlayerQuitEvent event) {
+
+                  if (oncePerEntry) {
+                      insidePlayers.remove(
+                              event.getPlayer().getUniqueId()
+                      );
+                  }
+              }
+
               private void sendTeleportRequest(Player player) {
 
-                  ByteArrayDataOutput out =
+                  final ByteArrayDataOutput output =
                           ByteStreams.newDataOutput();
 
-                  out.writeUTF("CHECK");
-                  out.writeUTF(targetServer);
+                  output.writeUTF("CHECK");
+                  output.writeUTF(targetServer);
 
                   player.sendPluginMessage(
                           this,
                           CHANNEL,
-                          out.toByteArray()
+                          output.toByteArray()
                   );
               }
           }
@@ -260,6 +295,10 @@ jobs:
       - name: Build Paper
         working-directory: paper
         run: mvn -B clean package
+
+      # =========================================================
+      # VELOCITY
+      # =========================================================
 
       - name: Create Velocity project
         shell: bash
@@ -279,7 +318,7 @@ jobs:
 
               <groupId>pl.reniferek</groupId>
               <artifactId>ServerTeleport-Velocity</artifactId>
-              <version>1.2.0</version>
+              <version>1.4.0</version>
 
               <properties>
                   <maven.compiler.release>21</maven.compiler.release>
@@ -304,12 +343,14 @@ jobs:
 
               <build>
                   <plugins>
+
                       <plugin>
                           <groupId>org.apache.maven.plugins</groupId>
                           <artifactId>maven-compiler-plugin</artifactId>
                           <version>3.13.0</version>
                           <configuration>
                               <release>21</release>
+
                               <annotationProcessorPaths>
                                   <path>
                                       <groupId>com.velocitypowered</groupId>
@@ -325,6 +366,7 @@ jobs:
                           <artifactId>maven-jar-plugin</artifactId>
                           <version>3.4.2</version>
                       </plugin>
+
                   </plugins>
               </build>
 
@@ -335,8 +377,8 @@ jobs:
           {
             "id": "servertp",
             "name": "ServerTeleport",
-            "version": "1.2.0",
-            "description": "Lekki system teleportowania Paper -> Velocity.",
+            "version": "1.4.0",
+            "description": "Lekki system Paper -> Velocity.",
             "authors": [
               "Reniferek"
             ],
@@ -349,94 +391,132 @@ jobs:
 
           import com.google.common.io.ByteArrayDataInput;
           import com.google.common.io.ByteStreams;
+          import com.google.inject.Inject;
+
           import com.velocitypowered.api.command.SimpleCommand;
           import com.velocitypowered.api.event.Subscribe;
           import com.velocitypowered.api.event.connection.PluginMessageEvent;
           import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
           import com.velocitypowered.api.plugin.Plugin;
+
           import com.velocitypowered.api.proxy.Player;
           import com.velocitypowered.api.proxy.ProxyServer;
-          import com.velocitypowered.api.proxy.RegisteredServer;
-          import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
+          import com.velocitypowered.api.proxy.ServerConnection;
 
-          import javax.inject.Inject;
+          import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
+          import com.velocitypowered.api.proxy.server.RegisteredServer;
+
+          import net.kyori.adventure.text.Component;
+
           import java.util.Optional;
-          import java.util.concurrent.ConcurrentHashMap;
-          import java.util.concurrent.ConcurrentMap;
 
           @Plugin(
                   id = "servertp",
                   name = "ServerTeleport",
-                  version = "1.2.0",
-                  description = "Lekki system teleportowania Paper -> Velocity.",
+                  version = "1.4.0",
+                  description = "Lekki system Paper -> Velocity.",
                   authors = {"Reniferek"}
           )
           public final class ServerTeleportVelocity {
 
+              private static final String TARGET_SERVER =
+                      "LifeStealSMPspawn";
+
               private static final MinecraftChannelIdentifier CHANNEL =
-                      MinecraftChannelIdentifier.from(
-                              "serverteleport:main"
+                      MinecraftChannelIdentifier.create(
+                              "serverteleport",
+                              "main"
                       );
 
               private final ProxyServer proxy;
 
-              private volatile boolean blockade = false;
-
-              private final ConcurrentMap<String, Boolean> pingCache =
-                      new ConcurrentHashMap<>();
+              /*
+               * true  = LifeStealSMP otwarty
+               * false = LifeStealSMP zablokowany
+               */
+              private volatile boolean open = true;
 
               @Inject
-              public ServerTeleportVelocity(ProxyServer proxy) {
+              public ServerTeleportVelocity(
+                      ProxyServer proxy
+              ) {
                   this.proxy = proxy;
               }
 
               @Subscribe
-              public void onProxyInitialization(ProxyInitializeEvent event) {
+              public void onProxyInitialization(
+                      ProxyInitializeEvent event
+              ) {
 
-                  proxy.getChannelRegistrar().register(CHANNEL);
+                  proxy.getChannelRegistrar()
+                          .register(CHANNEL);
 
                   proxy.getCommandManager().register(
                           proxy.getCommandManager()
-                                  .metaBuilder("blokadaLifeStealSMP")
+                                  .metaBuilder(
+                                          "blokadaLifeStealSMP"
+                                  )
                                   .build(),
                           new BlockCommand()
                   );
 
                   proxy.getCommandManager().register(
                           proxy.getCommandManager()
-                                  .metaBuilder("statusLifeStealSMP")
+                                  .metaBuilder(
+                                          "statusLifeStealSMP"
+                                  )
                                   .build(),
                           new StatusCommand()
                   );
               }
 
               @Subscribe
-              public void onPluginMessage(PluginMessageEvent event) {
+              public void onPluginMessage(
+                      PluginMessageEvent event
+              ) {
 
+                  /*
+                   * Najpierw sprawdzamy kanał.
+                   */
                   if (!CHANNEL.equals(event.getIdentifier())) {
                       return;
                   }
 
+                  /*
+                   * Obsługujemy wiadomość całkowicie.
+                   * Nie przekazujemy jej dalej.
+                   */
                   event.setResult(
                           PluginMessageEvent.ForwardResult.handled()
                   );
 
+                  /*
+                   * Wiadomość musi pochodzić
+                   * z backendowego serwera.
+                   */
                   if (!(event.getSource()
-                          instanceof com.velocitypowered.api.proxy.ServerConnection backend)) {
+                          instanceof ServerConnection connection)) {
                       return;
                   }
 
-                  if (!(event.getTarget() instanceof Player player)) {
-                      return;
-                  }
+                  /*
+                   * Gracz jest przypisany do ServerConnection.
+                   */
+                  final Player player =
+                          connection.getPlayer();
 
-                  ByteArrayDataInput in =
-                          ByteStreams.newDataInput(event.getData());
+                  /*
+                   * Odczyt wiadomości.
+                   */
+                  final ByteArrayDataInput input =
+                          ByteStreams.newDataInput(
+                                  event.getData()
+                          );
 
                   final String action;
 
                   try {
-                      action = in.readUTF();
+                      action = input.readUTF();
                   } catch (Exception ignored) {
                       return;
                   }
@@ -445,69 +525,139 @@ jobs:
                       return;
                   }
 
-                  final String targetName;
+                  final String requestedServer;
 
                   try {
-                      targetName = in.readUTF();
+                      requestedServer = input.readUTF();
                   } catch (Exception ignored) {
                       return;
                   }
 
-                  if (blockade) {
+                  /*
+                   * Zabezpieczenie:
+                   * plugin może przekierować tylko
+                   * na LifeStealSMPspawn.
+                   */
+                  if (!TARGET_SERVER.equals(requestedServer)) {
+                      return;
+                  }
+
+                  /*
+                   * Sprawdzenie blokady.
+                   */
+                  if (!open) {
+
                       player.sendMessage(
-                              net.kyori.adventure.text.Component.text(
+                              Component.text(
                                       "LifeStealSMP jest aktualnie zablokowany."
                               )
                       );
+
                       return;
                   }
 
-                  Optional<RegisteredServer> optionalTarget =
-                          proxy.getServer(targetName);
+                  /*
+                   * Pobranie serwera z Velocity.
+                   */
+                  final Optional<RegisteredServer> optional =
+                          proxy.getServer(TARGET_SERVER);
 
-                  if (optionalTarget.isEmpty()) {
+                  if (optional.isEmpty()) {
+
                       player.sendMessage(
-                              net.kyori.adventure.text.Component.text(
+                              Component.text(
                                       "LifeStealSMP jest aktualnie wyłączony."
                               )
                       );
+
                       return;
                   }
 
-                  RegisteredServer target =
-                          optionalTarget.get();
+                  final RegisteredServer target =
+                          optional.get();
 
+                  /*
+                   * Ping jest wykonywany tylko wtedy,
+                   * gdy gracz faktycznie użyje portalu.
+                   *
+                   * Nie ma żadnego pingowania co sekundę,
+                   * co tick ani w tle.
+                   */
                   target.ping().whenComplete(
                           (ping, error) -> {
 
                               if (error != null) {
-                                  player.sendMessage(
-                                          net.kyori.adventure.text.Component.text(
-                                                  "LifeStealSMP jest aktualnie wyłączony."
-                                          )
-                                  );
+
+                                  if (player.isActive()) {
+                                      player.sendMessage(
+                                              Component.text(
+                                                      "LifeStealSMP jest aktualnie wyłączony."
+                                              )
+                                      );
+                                  }
+
                                   return;
                               }
 
+                              /*
+                               * Sprawdzenie, czy gracz nadal jest online.
+                               */
                               if (!player.isActive()) {
                                   return;
                               }
 
+                              /*
+                               * Blokada mogła zostać zmieniona
+                               * podczas wykonywania pinga.
+                               */
+                              if (!open) {
+
+                                  player.sendMessage(
+                                          Component.text(
+                                                  "LifeStealSMP jest aktualnie zablokowany."
+                                          )
+                                  );
+
+                                  return;
+                              }
+
+                              /*
+                               * Połączenie z LifeStealSMP.
+                               */
                               player.createConnectionRequest(target)
                                       .connect()
-                                      .exceptionally(connectionError -> {
-                                          if (player.isActive()) {
+                                      .thenAccept(result -> {
+
+                                          if (!result.isSuccessful()
+                                                  && player.isActive()) {
+
                                               player.sendMessage(
-                                                      net.kyori.adventure.text.Component.text(
+                                                      Component.text(
                                                               "Nie udało się połączyć z LifeStealSMP."
                                                       )
                                               );
                                           }
+                                      })
+                                      .exceptionally(connectionError -> {
+
+                                          if (player.isActive()) {
+
+                                              player.sendMessage(
+                                                      Component.text(
+                                                              "Nie udało się połączyć z LifeStealSMP."
+                                                      )
+                                              );
+                                          }
+
                                           return null;
                                       });
                           }
                   );
               }
+
+              // =====================================================
+              // /blokadaLifeStealSMP
+              // =====================================================
 
               private final class BlockCommand
                       implements SimpleCommand {
@@ -517,37 +667,46 @@ jobs:
                           Invocation invocation
                   ) {
 
-                      String[] args = invocation.arguments();
+                      final String[] args =
+                              invocation.arguments();
 
                       if (args.length != 1) {
+
                           invocation.source().sendMessage(
-                                  net.kyori.adventure.text.Component.text(
+                                  Component.text(
                                           "/blokadaLifeStealSMP on/off"
                                   )
                           );
+
                           return;
                       }
 
+                      /*
+                       * ON = otwórz LifeStealSMP.
+                       */
                       if (args[0].equalsIgnoreCase("on")) {
 
-                          blockade = true;
+                          open = true;
 
                           invocation.source().sendMessage(
-                                  net.kyori.adventure.text.Component.text(
-                                          "Blokada LifeStealSMP: WŁĄCZONA"
+                                  Component.text(
+                                          "LifeStealSMP: OTWARTY"
                                   )
                           );
 
                           return;
                       }
 
+                      /*
+                       * OFF = zablokuj LifeStealSMP.
+                       */
                       if (args[0].equalsIgnoreCase("off")) {
 
-                          blockade = false;
+                          open = false;
 
                           invocation.source().sendMessage(
-                                  net.kyori.adventure.text.Component.text(
-                                          "Blokada LifeStealSMP: WYŁĄCZONA"
+                                  Component.text(
+                                          "LifeStealSMP: ZABLOKOWANY"
                                   )
                           );
 
@@ -555,12 +714,16 @@ jobs:
                       }
 
                       invocation.source().sendMessage(
-                              net.kyori.adventure.text.Component.text(
+                              Component.text(
                                       "/blokadaLifeStealSMP on/off"
                               )
                       );
                   }
               }
+
+              // =====================================================
+              // /statusLifeStealSMP
+              // =====================================================
 
               private final class StatusCommand
                       implements SimpleCommand {
@@ -570,45 +733,69 @@ jobs:
                           Invocation invocation
                   ) {
 
-                      Optional<RegisteredServer> server =
-                              proxy.getServer("LifeStealSMPspawn");
-
-                      boolean registered = server.isPresent();
+                      final Optional<RegisteredServer> optional =
+                              proxy.getServer(TARGET_SERVER);
 
                       invocation.source().sendMessage(
-                              net.kyori.adventure.text.Component.text(
+                              Component.text(
                                       "§7§m--------------------"
                               )
                       );
 
                       invocation.source().sendMessage(
-                              net.kyori.adventure.text.Component.text(
+                              Component.text(
                                       "§eLifeStealSMP"
                               )
                       );
 
                       invocation.source().sendMessage(
-                              net.kyori.adventure.text.Component.text(
+                              Component.text(
                                       "§7Blokada: " +
-                                              (blockade
-                                                      ? "§cZABLOKOWANY"
-                                                      : "§aODBLOKOWANY")
+                                              (open
+                                                      ? "§aODBLOKOWANY"
+                                                      : "§cZABLOKOWANY")
                               )
                       );
 
-                      invocation.source().sendMessage(
-                              net.kyori.adventure.text.Component.text(
-                                      "§7Serwer: " +
-                                              (registered
-                                                      ? "§aURUCHOMIONY"
-                                                      : "§cWYŁĄCZONY")
-                              )
-                      );
+                      if (optional.isEmpty()) {
 
-                      invocation.source().sendMessage(
-                              net.kyori.adventure.text.Component.text(
-                                      "§7§m--------------------"
-                              )
+                          invocation.source().sendMessage(
+                                  Component.text(
+                                          "§7Serwer: §cWYŁĄCZONY"
+                                  )
+                          );
+
+                          invocation.source().sendMessage(
+                                  Component.text(
+                                          "§7§m--------------------"
+                                  )
+                          );
+
+                          return;
+                      }
+
+                      /*
+                       * Status robi pojedynczy ping
+                       * tylko po wpisaniu komendy.
+                       */
+                      optional.get().ping().whenComplete(
+                              (ping, error) -> {
+
+                                  invocation.source().sendMessage(
+                                          Component.text(
+                                                  "§7Serwer: " +
+                                                          (error == null
+                                                                  ? "§aURUCHOMIONY"
+                                                                  : "§cWYŁĄCZONY")
+                                          )
+                                  );
+
+                                  invocation.source().sendMessage(
+                                          Component.text(
+                                                  "§7§m--------------------"
+                                          )
+                                  );
+                              }
                       );
                   }
               }
@@ -619,6 +806,10 @@ jobs:
         working-directory: velocity
         run: mvn -B clean package
 
+      # =========================================================
+      # GOTOWE JARY
+      # =========================================================
+
       - name: Prepare plugins
         shell: bash
         run: |
@@ -627,21 +818,21 @@ jobs:
           mkdir -p artifacts
 
           cp \
-            paper/target/ServerTeleport-Paper-1.0.0.jar \
+            paper/target/ServerTeleport-Paper-1.1.0.jar \
             artifacts/ServerTeleport-Paper.jar
 
           cp \
-            velocity/target/ServerTeleport-Velocity-1.2.0.jar \
+            velocity/target/ServerTeleport-Velocity-1.4.0.jar \
             artifacts/ServerTeleport-Velocity.jar
 
-      - name: Upload Paper plugin
+      - name: Upload Paper
         uses: actions/upload-artifact@v4
         with:
           name: ServerTeleport-Paper
           path: artifacts/ServerTeleport-Paper.jar
           if-no-files-found: error
 
-      - name: Upload Velocity plugin
+      - name: Upload Velocity
         uses: actions/upload-artifact@v4
         with:
           name: ServerTeleport-Velocity
