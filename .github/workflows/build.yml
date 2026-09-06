@@ -337,7 +337,7 @@ jobs:
 
               private String formatOnline(int online, int max, String placeholder) {
                   // This is only a fallback. Per-hologram templates are applied in renderLine().
-                  return ChatColor.WHITE + online + ChatColor.WHITE + "/" + ChatColor.WHITE + max;
+                  return ChatColor.WHITE.toString() + online + ChatColor.WHITE + "/" + ChatColor.WHITE + max;
               }
 
               private Component renderLine(HologramData h, String input, Player viewer) {
