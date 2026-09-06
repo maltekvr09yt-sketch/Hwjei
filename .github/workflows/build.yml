@@ -19,69 +19,78 @@ jobs:
           java-version: '21'
 
       - name: Create project
+        shell: bash
         run: |
+          set -e
+
           mkdir -p src/main/java/pl/hub2protection
+          mkdir -p src/main/resources
 
           cat > pom.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
+
           <project xmlns="http://maven.apache.org/POM/4.0.0"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
 
-            <modelVersion>4.0.0</modelVersion>
+              <modelVersion>4.0.0</modelVersion>
 
-            <groupId>pl.hub2protection</groupId>
-            <artifactId>Hub2Protection</artifactId>
-            <version>1.4.0</version>
+              <groupId>pl.hub2protection</groupId>
+              <artifactId>Hub2Protection</artifactId>
+              <version>1.4.1</version>
 
-            <properties>
-              <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-              <maven.compiler.release>21</maven.compiler.release>
-            </properties>
+              <properties>
+                  <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+                  <maven.compiler.release>21</maven.compiler.release>
+              </properties>
 
-            <repositories>
-              <repository>
-                <id>papermc</id>
-                <url>https://repo.papermc.io/repository/maven-public/</url>
-              </repository>
-            </repositories>
+              <repositories>
+                  <repository>
+                      <id>papermc</id>
+                      <url>https://repo.papermc.io/repository/maven-public/</url>
+                  </repository>
+              </repositories>
 
-            <dependencies>
-              <dependency>
-                <groupId>io.papermc.paper</groupId>
-                <artifactId>paper-api</artifactId>
-                <version>1.21.4-R0.1-SNAPSHOT</version>
-                <scope>provided</scope>
-              </dependency>
-            </dependencies>
+              <dependencies>
+                  <dependency>
+                      <groupId>io.papermc.paper</groupId>
+                      <artifactId>paper-api</artifactId>
+                      <version>1.21.4-R0.1-SNAPSHOT</version>
+                      <scope>provided</scope>
+                  </dependency>
+              </dependencies>
 
-            <build>
-              <plugins>
-                <plugin>
-                  <groupId>org.apache.maven.plugins</groupId>
-                  <artifactId>maven-compiler-plugin</artifactId>
-                  <version>3.13.0</version>
-                  <configuration>
-                    <release>21</release>
-                  </configuration>
-                </plugin>
+              <build>
+                  <plugins>
 
-                <plugin>
-                  <groupId>org.apache.maven.plugins</groupId>
-                  <artifactId>maven-jar-plugin</artifactId>
-                  <version>3.4.2</version>
-                  <configuration>
-                    <archive>
-                      <manifestEntries>
-                        <paperweight-mappings-namespace>mojang</paperweight-mappings-namespace>
-                      </manifestEntries>
-                    </archive>
-                  </configuration>
-                </plugin>
-              </plugins>
-            </build>
+                      <plugin>
+                          <groupId>org.apache.maven.plugins</groupId>
+                          <artifactId>maven-compiler-plugin</artifactId>
+                          <version>3.13.0</version>
+                          <configuration>
+                              <release>21</release>
+                          </configuration>
+                      </plugin>
+
+                      <plugin>
+                          <groupId>org.apache.maven.plugins</groupId>
+                          <artifactId>maven-jar-plugin</artifactId>
+                          <version>3.4.2</version>
+                      </plugin>
+
+                  </plugins>
+              </build>
 
           </project>
+          EOF
+
+          cat > src/main/resources/plugin.yml <<'EOF'
+          name: Hub2Protection
+          version: 1.4.1
+          main: pl.hub2protection.Hub2Protection
+          api-version: '1.21'
+          description: Lightweight Hub2 protection
+          author: Hub2
           EOF
 
           cat > src/main/java/pl/hub2protection/Hub2Protection.java <<'EOF'
@@ -90,6 +99,7 @@ jobs:
           import org.bukkit.GameMode;
           import org.bukkit.Location;
           import org.bukkit.Material;
+          import org.bukkit.World;
           import org.bukkit.block.Block;
           import org.bukkit.entity.Player;
           import org.bukkit.event.EventHandler;
@@ -110,8 +120,10 @@ jobs:
 
               @Override
               public void onEnable() {
+                  World world = getServer().getWorlds().get(0);
+
                   spawn = new Location(
-                          getServer().getWorlds().get(0),
+                          world,
                           0.5,
                           66.0,
                           -20.5,
@@ -133,21 +145,30 @@ jobs:
                   player.teleport(spawn);
               }
 
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
               public void onDamage(EntityDamageEvent event) {
                   if (event.getEntity() instanceof Player) {
                       event.setCancelled(true);
                   }
               }
 
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
               public void onFood(FoodLevelChangeEvent event) {
                   if (event.getEntity() instanceof Player) {
                       event.setCancelled(true);
                   }
               }
 
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
               public void onInteract(PlayerInteractEvent event) {
                   Action action = event.getAction();
 
@@ -162,56 +183,64 @@ jobs:
                       return;
                   }
 
-                  Material type = block.getType();
+                  Material material = block.getType();
 
-                  if (type.name().endsWith("_BED")) {
+                  if (material.name().endsWith("_BED")) {
                       event.setCancelled(true);
                   }
               }
 
-              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
               public void onBedEnter(PlayerBedEnterEvent event) {
                   event.setCancelled(true);
               }
 
-              @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+              @EventHandler(
+                      priority = EventPriority.HIGHEST,
+                      ignoreCancelled = true
+              )
               public void onMove(PlayerMoveEvent event) {
                   if (!event.hasChangedBlock()) {
                       return;
                   }
 
-                  if (event.getTo() == null) {
+                  Location to = event.getTo();
+
+                  if (to == null) {
                       return;
                   }
 
-                  if (event.getTo().getBlockY() <= -10) {
+                  if (to.getBlockY() <= -10) {
                       event.getPlayer().teleport(spawn);
                   }
               }
           }
           EOF
 
-          cat > src/main/resources/plugin.yml <<'EOF'
-          name: Hub2Protection
-          version: 1.4.0
-          main: pl.hub2protection.Hub2Protection
-          api-version: '1.21'
-          description: Lightweight protection plugin for Hub2
-          author: Hub2
-          EOF
-
       - name: Build
-        run: mvn -B package --no-transfer-progress
-
-      - name: Prepare artifact
         run: |
-          mkdir -p release
-          cp target/Hub2Protection-1.4.0.jar release/Hub2Protection.jar
-          cd release
-          zip ../Hub2Protection.zip Hub2Protection.jar
+          mvn -B package --no-transfer-progress
 
-      - name: Upload ZIP
+      - name: Prepare release
+        run: |
+          set -e
+
+          mkdir -p release
+
+          cp target/Hub2Protection-1.4.1.jar \
+             release/Hub2Protection.jar
+
+          cd release
+
+          zip -9 ../Hub2Protection.zip \
+              Hub2Protection.jar
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: Hub2Protection
           path: Hub2Protection.zip
+          if-no-files-found: error
