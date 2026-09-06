@@ -89,7 +89,7 @@ jobs:
           import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
           import com.velocitypowered.api.proxy.Player;
           import com.velocitypowered.api.proxy.ProxyServer;
-          import com.velocitypowered.api.proxy.RegisteredServer;
+          import com.velocitypowered.api.proxy.server.RegisteredServer;
           import com.velocitypowered.api.proxy.ServerConnection;
           import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
           import com.velocitypowered.api.proxy.server.ServerPing;
