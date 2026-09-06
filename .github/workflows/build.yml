@@ -1,38 +1,32 @@
-name: Build ServerTeleport Velocity Bridge v1.4.1
-
+name: Build HologramPlugin
 on:
   workflow_dispatch:
   push:
+    paths:
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Java 21
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: '21'
 
       - name: Create project
         shell: bash
         run: |
-          set -e
-          mkdir -p src/main/java/pl/reniferek/servertp
-          mkdir -p src/main/resources
+          set -euo pipefail
+          mkdir -p src/main/java/pl/reniferek/hologram src/main/resources
 
-          cat > pom.xml <<'POM'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <project xmlns="http://maven.apache.org/POM/4.0.0"
-                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+          cat > pom.xml <<'EOF'
+          <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
             <modelVersion>4.0.0</modelVersion>
             <groupId>pl.reniferek</groupId>
-            <artifactId>ServerTeleport-Velocity</artifactId>
-            <version>1.4.1</version>
+            <artifactId>HologramPlugin</artifactId>
+            <version>1.7.0</version>
             <properties>
               <maven.compiler.release>21</maven.compiler.release>
               <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -45,9 +39,9 @@ jobs:
             </repositories>
             <dependencies>
               <dependency>
-                <groupId>com.velocitypowered</groupId>
-                <artifactId>velocity-api</artifactId>
-                <version>3.4.0-SNAPSHOT</version>
+                <groupId>io.papermc.paper</groupId>
+                <artifactId>paper-api</artifactId>
+                <version>1.21.4-R0.1-SNAPSHOT</version>
                 <scope>provided</scope>
               </dependency>
             </dependencies>
@@ -56,418 +50,48 @@ jobs:
                 <plugin>
                   <groupId>org.apache.maven.plugins</groupId>
                   <artifactId>maven-compiler-plugin</artifactId>
-                  <version>3.13.0</version>
+                  <version>3.14.0</version>
                   <configuration><release>21</release></configuration>
                 </plugin>
               </plugins>
             </build>
           </project>
-          POM
+          EOF
 
-          cat > src/main/resources/velocity-plugin.json <<'JSON'
-          {
-            "id": "serverteleport",
-            "name": "ServerTeleport",
-            "version": "1.4.1",
-            "authors": ["Reniferek"],
-            "dependencies": [],
-            "main": "pl.reniferek.servertp.ServerTeleportVelocity"
+          cat > src/main/resources/plugin.yml <<'EOF'
+          name: HologramPlugin
+          version: 1.7.0
+          main: pl.reniferek.hologram.HologramPlugin
+          api-version: '1.21'
+          commands:
+            hologram:
+              description: Zarządzanie hologramami
+              aliases: [holo]
+              permission: hologram.admin
+          permissions:
+            hologram.admin:
+              default: op
+          EOF
+
+          cat > src/main/java/pl/reniferek/hologram/HologramPlugin.java <<'EOF'
+          package pl.reniferek.hologram;
+          import org.bukkit.plugin.java.JavaPlugin;
+          public final class HologramPlugin extends JavaPlugin {
+            @Override public void onEnable(){ getLogger().info("HologramPlugin 1.7.0 uruchomiony."); }
           }
-          JSON
+          EOF
 
-          cat > src/main/java/pl/reniferek/servertp/ServerTeleportVelocity.java <<'JAVA'
-          package pl.reniferek.servertp;
-
-          import com.google.common.io.ByteArrayDataInput;
-          import com.google.common.io.ByteArrayDataOutput;
-          import com.google.common.io.ByteStreams;
-          import com.google.inject.Inject;
-          import com.velocitypowered.api.command.CommandSource;
-          import com.velocitypowered.api.event.Subscribe;
-          import com.velocitypowered.api.event.connection.PluginMessageEvent;
-          import com.velocitypowered.api.event.player.ServerPostConnectEvent;
-          import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
-          import com.velocitypowered.api.proxy.Player;
-          import com.velocitypowered.api.proxy.ProxyServer;
-          import com.velocitypowered.api.proxy.server.RegisteredServer;
-          import com.velocitypowered.api.proxy.ServerConnection;
-          import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
-          import com.velocitypowered.api.proxy.server.ServerPing;
-          import com.velocitypowered.api.command.SimpleCommand;
-          import net.kyori.adventure.text.Component;
-          import net.kyori.adventure.text.format.NamedTextColor;
-
-          import java.io.IOException;
-          import java.nio.file.Files;
-          import java.nio.file.Path;
-          import java.util.List;
-          import java.util.Locale;
-          import java.util.Optional;
-          import java.util.Properties;
-
-          public final class ServerTeleportVelocity {
-
-              private static final String TARGET_SERVER = "LifeStealSMPspawn";
-              private static final List<String> HUBS = List.of("hub1", "hub2", "hub3");
-
-              private static final MinecraftChannelIdentifier TELEPORT_CHANNEL =
-                      MinecraftChannelIdentifier.create("serverteleport", "main");
-              private static final MinecraftChannelIdentifier STATS_CHANNEL =
-                      MinecraftChannelIdentifier.create("serverteleport", "stats");
-
-              private final ProxyServer proxy;
-              private final Path dataDirectory;
-
-              private volatile boolean blockade;
-              private volatile int lifeStealOnline;
-              private volatile int lifeStealMax;
-
-              @Inject
-              public ServerTeleportVelocity(ProxyServer proxy,
-                                             @com.velocitypowered.api.plugin.annotation.DataDirectory Path dataDirectory) {
-                  this.proxy = proxy;
-                  this.dataDirectory = dataDirectory;
-                  this.blockade = false;
-                  this.lifeStealOnline = 0;
-                  this.lifeStealMax = 0;
-                  loadConfig();
-              }
-
-              @Subscribe
-              public void onProxyInitialization(ProxyInitializeEvent event) {
-                  proxy.getChannelRegistrar().register(TELEPORT_CHANNEL, STATS_CHANNEL);
-
-                  proxy.getCommandManager().register(
-                          proxy.getCommandManager().metaBuilder("blokadaLifeStealSMP").build(),
-                          new BlockadeCommand()
-                  );
-
-                  proxy.getCommandManager().register(
-                          proxy.getCommandManager().metaBuilder("statusLifeStealSMP").build(),
-                          new StatusCommand()
-                  );
-              }
-
-              @Subscribe
-              public void onPluginMessage(PluginMessageEvent event) {
-                  if (!TELEPORT_CHANNEL.equals(event.getIdentifier()) &&
-                      !STATS_CHANNEL.equals(event.getIdentifier())) {
-                      return;
-                  }
-
-                  event.setResult(PluginMessageEvent.ForwardResult.handled());
-
-                  if (!(event.getSource() instanceof ServerConnection connection)) return;
-
-                  if (TELEPORT_CHANNEL.equals(event.getIdentifier())) {
-                      handleTeleportMessage(connection, event.getData());
-                  } else {
-                      handleStatsMessage(connection, event.getData());
-                  }
-              }
-
-              private void handleTeleportMessage(ServerConnection connection, byte[] data) {
-                  ByteArrayDataInput in = ByteStreams.newDataInput(data);
-                  String action;
-                  try {
-                      action = in.readUTF();
-                  } catch (Exception ignored) {
-                      return;
-                  }
-
-                  if (!"CHECK".equals(action)) return;
-
-                  String target;
-                  try {
-                      target = in.readUTF();
-                  } catch (Exception ignored) {
-                      return;
-                  }
-
-                  if (!TARGET_SERVER.equalsIgnoreCase(target)) return;
-
-                  Player player = connection.getPlayer();
-
-                  if (blockade) {
-                      player.sendMessage(Component.text(
-                              "LifeStealSMP jest aktualnie zablokowany.",
-                              NamedTextColor.RED
-                      ));
-                      return;
-                  }
-
-                  Optional<RegisteredServer> optional = proxy.getServer(TARGET_SERVER);
-                  if (optional.isEmpty()) {
-                      lifeStealOnline = 0;
-                      lifeStealMax = 0;
-                      broadcastStats();
-                      player.sendMessage(Component.text(
-                              "LifeStealSMP jest aktualnie wyłączony.",
-                              NamedTextColor.RED
-                      ));
-                      return;
-                  }
-
-                  RegisteredServer server = optional.get();
-                  server.ping().whenComplete((ping, error) -> {
-                      if (error != null || ping == null) {
-                          lifeStealOnline = 0;
-                          lifeStealMax = 0;
-                          broadcastStats();
-                          if (player.isActive()) {
-                              player.sendMessage(Component.text(
-                                      "LifeStealSMP jest aktualnie wyłączony.",
-                                      NamedTextColor.RED
-                              ));
-                          }
-                          return;
-                      }
-
-                      updateFromPing(server, ping);
-
-                      if (!player.isActive()) return;
-                      if (blockade) {
-                          player.sendMessage(Component.text(
-                                  "LifeStealSMP jest aktualnie zablokowany.",
-                                  NamedTextColor.RED
-                          ));
-                          return;
-                      }
-
-                      player.createConnectionRequest(server).connect().thenAccept(result -> {
-                          if (!result.isSuccessful() && player.isActive()) {
-                              player.sendMessage(Component.text(
-                                      "Nie udało się połączyć z LifeStealSMP.",
-                                      NamedTextColor.RED
-                              ));
-                          }
-                      }).exceptionally(error2 -> {
-                          if (player.isActive()) {
-                              player.sendMessage(Component.text(
-                                      "Nie udało się połączyć z LifeStealSMP.",
-                                      NamedTextColor.RED
-                              ));
-                          }
-                          return null;
-                      });
-                  });
-              }
-
-              private void handleStatsMessage(ServerConnection connection, byte[] data) {
-                  ByteArrayDataInput in = ByteStreams.newDataInput(data);
-                  try {
-                      if (!"REQUEST".equals(in.readUTF())) return;
-                  } catch (Exception ignored) {
-                      return;
-                  }
-
-                  sendStats(connection);
-              }
-
-              @Subscribe
-              public void onServerPostConnect(ServerPostConnectEvent event) {
-                  RegisteredServer current = event.getPlayer().getCurrentServer()
-                          .map(ServerConnection::getServer)
-                          .orElse(null);
-
-                  RegisteredServer previous = event.getPreviousServer();
-
-                  if (current != null && isTarget(current)) {
-                      lifeStealOnline = current.getPlayersConnected().size();
-                      lifeStealOnline = Math.max(0, lifeStealOnline);
-                      updateOnlineAndBroadcast(current);
-                  } else if (previous != null && isTarget(previous)) {
-                      updateOnlineAndBroadcast(previous);
-                  }
-              }
-
-              private void updateOnlineAndBroadcast(RegisteredServer server) {
-                  lifeStealOnline = server.getPlayersConnected().size();
-                  if (lifeStealMax <= 0) {
-                      server.ping().whenComplete((ping, error) -> {
-                          if (error == null && ping != null) {
-                              updateFromPing(server, ping);
-                          } else {
-                              broadcastStats();
-                          }
-                      });
-                  } else {
-                      broadcastStats();
-                  }
-              }
-
-              private void updateFromPing(RegisteredServer server, ServerPing ping) {
-                  if (!isTarget(server)) return;
-                  lifeStealOnline = server.getPlayersConnected().size();
-                  lifeStealMax = ping.getPlayers().map(ServerPing.Players::getMax).orElse(0);
-                  broadcastStats();
-              }
-
-              private boolean isTarget(RegisteredServer server) {
-                  return TARGET_SERVER.equalsIgnoreCase(server.getServerInfo().getName());
-              }
-
-              private void sendStats(ServerConnection connection) {
-                  ByteArrayDataOutput out = ByteStreams.newDataOutput();
-                  out.writeUTF("STATS");
-                  out.writeInt(Math.max(0, lifeStealOnline));
-                  out.writeInt(Math.max(0, lifeStealMax));
-                  out.writeUTF(lifeStealOnline > 0 || lifeStealMax > 0 ? "włączony" : "wyłączony");
-                  out.writeUTF(blockade ? "zablokowany" : "otwarty");
-                  connection.sendPluginMessage(STATS_CHANNEL, out.toByteArray());
-              }
-
-              private void broadcastStats() {
-                  byte[] data = createStatsPacket();
-                  for (String hubName : HUBS) {
-                      proxy.getServer(hubName).ifPresent(server ->
-                              server.sendPluginMessage(STATS_CHANNEL, data));
-                  }
-              }
-
-              private byte[] createStatsPacket() {
-                  ByteArrayDataOutput out = ByteStreams.newDataOutput();
-                  out.writeUTF("STATS");
-                  out.writeInt(Math.max(0, lifeStealOnline));
-                  out.writeInt(Math.max(0, lifeStealMax));
-                  out.writeUTF(lifeStealOnline > 0 || lifeStealMax > 0 ? "włączony" : "wyłączony");
-                  out.writeUTF(blockade ? "zablokowany" : "otwarty");
-                  return out.toByteArray();
-              }
-
-              private void setBlockade(boolean value, CommandSource source) {
-                  if (blockade == value) {
-                      source.sendMessage(Component.text(
-                              value ? "LifeStealSMP: ZABLOKOWANY" : "LifeStealSMP: ODBLOKOWANY",
-                              value ? NamedTextColor.RED : NamedTextColor.GREEN
-                      ));
-                      return;
-                  }
-
-                  blockade = value;
-                  saveConfig();
-                  broadcastStats();
-
-                  source.sendMessage(Component.text(
-                          value ? "LifeStealSMP: ZABLOKOWANY" : "LifeStealSMP: ODBLOKOWANY",
-                          value ? NamedTextColor.RED : NamedTextColor.GREEN
-                  ));
-              }
-
-              private void showStatus(CommandSource source) {
-                  Optional<RegisteredServer> optional = proxy.getServer(TARGET_SERVER);
-                  if (optional.isEmpty()) {
-                      lifeStealOnline = 0;
-                      lifeStealMax = 0;
-                      broadcastStats();
-                      source.sendMessage(Component.text(
-                              "LifeStealSMP: WYŁĄCZONY | " +
-                              (blockade ? "ZABLOKOWANY" : "OTWARTY"),
-                              NamedTextColor.RED
-                      ));
-                      return;
-                  }
-
-                  RegisteredServer server = optional.get();
-                  server.ping().whenComplete((ping, error) -> {
-                      if (error != null || ping == null) {
-                          lifeStealOnline = 0;
-                          lifeStealMax = 0;
-                          broadcastStats();
-                          source.sendMessage(Component.text(
-                                  "LifeStealSMP: WYŁĄCZONY | " +
-                                  (blockade ? "ZABLOKOWANY" : "OTWARTY"),
-                                  NamedTextColor.RED
-                          ));
-                          return;
-                      }
-
-                      updateFromPing(server, ping);
-                      int online = server.getPlayersConnected().size();
-                      int max = ping.getPlayers().map(ServerPing.Players::getMax).orElse(0);
-                      source.sendMessage(Component.text(
-                              "LifeStealSMP: URUCHOMIONY " + online + "/" + max +
-                              " | " + (blockade ? "ZABLOKOWANY" : "OTWARTY"),
-                              blockade ? NamedTextColor.RED : NamedTextColor.GREEN
-                      ));
-                  });
-              }
-
-              private void loadConfig() {
-                  try {
-                      Files.createDirectories(dataDirectory);
-                      Path file = dataDirectory.resolve("config.properties");
-                      Properties properties = new Properties();
-                      if (Files.exists(file)) {
-                          try (var reader = Files.newBufferedReader(file)) {
-                              properties.load(reader);
-                          }
-                      }
-                      blockade = Boolean.parseBoolean(properties.getProperty("blockade", "false"));
-                  } catch (IOException ignored) {
-                      blockade = false;
-                  }
-              }
-
-              private void saveConfig() {
-                  try {
-                      Files.createDirectories(dataDirectory);
-                      Properties properties = new Properties();
-                      properties.setProperty("blockade", Boolean.toString(blockade));
-                      try (var writer = Files.newBufferedWriter(dataDirectory.resolve("config.properties"))) {
-                          properties.store(writer, "ServerTeleport configuration");
-                      }
-                  } catch (IOException ignored) {
-                  }
-              }
-
-              private final class BlockadeCommand implements SimpleCommand {
-                  @Override
-                  public void execute(Invocation invocation) {
-                      String[] args = invocation.arguments();
-                      if (args.length != 1) {
-                          invocation.source().sendMessage(Component.text(
-                                  "Użycie: /blokadaLifeStealSMP on|off",
-                                  NamedTextColor.RED
-                          ));
-                          return;
-                      }
-                      if (args[0].equalsIgnoreCase("on")) {
-                          setBlockade(true, invocation.source());
-                      } else if (args[0].equalsIgnoreCase("off")) {
-                          setBlockade(false, invocation.source());
-                      } else {
-                          invocation.source().sendMessage(Component.text(
-                                  "Użycie: /blokadaLifeStealSMP on|off",
-                                  NamedTextColor.RED
-                          ));
-                      }
-                  }
-              }
-
-              private final class StatusCommand implements SimpleCommand {
-                  @Override
-                  public void execute(Invocation invocation) {
-                      showStatus(invocation.source());
-                  }
-              }
-          }
-          JAVA
+      - name: Setup Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
 
       - name: Build
-        run: mvn -B package --no-transfer-progress
+        run: mvn -B -ntp package
 
-      - name: Prepare ZIP
-        run: |
-          set -e
-          mkdir -p release
-          cp target/ServerTeleport-Velocity-1.4.1.jar release/ServerTeleport-Velocity.jar
-          cd release
-          zip -9 ../ServerTeleport-Velocity-BRIDGE.zip ServerTeleport-Velocity.jar
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: ServerTeleport-Velocity-BRIDGE
-          path: ServerTeleport-Velocity-BRIDGE.zip
+          name: HologramPlugin
+          path: target/HologramPlugin-1.7.0.jar
           if-no-files-found: error
