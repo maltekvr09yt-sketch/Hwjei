@@ -1,4 +1,4 @@
-name: Build VelocityLogin
+name: Build HubLogin
 
 on:
   workflow_dispatch:
@@ -7,432 +7,436 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+    steps:
+      - name: Pobierz repozytorium
+        uses: actions/checkout@v4
+
+      - name: Java 21
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Create project
+      - name: Utwórz projekt
         shell: bash
         run: |
-          mkdir -p src/main/java/pl/velocitylogin
+          mkdir -p src/main/java/pl/hublogin
+          mkdir -p src/main/resources
+
           cat > pom.xml <<'EOF'
           <project xmlns="http://maven.apache.org/POM/4.0.0">
             <modelVersion>4.0.0</modelVersion>
-            <groupId>pl.velocitylogin</groupId>
-            <artifactId>VelocityLogin</artifactId>
+
+            <groupId>pl.hublogin</groupId>
+            <artifactId>HubLogin</artifactId>
             <version>1.0.0</version>
+
             <properties>
               <maven.compiler.release>21</maven.compiler.release>
               <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
             </properties>
+
             <repositories>
               <repository>
                 <id>papermc</id>
                 <url>https://repo.papermc.io/repository/maven-public/</url>
               </repository>
             </repositories>
+
             <dependencies>
               <dependency>
-                <groupId>com.velocitypowered</groupId>
-                <artifactId>velocity-api</artifactId>
-                <version>3.4.0-SNAPSHOT</version>
+                <groupId>io.papermc.paper</groupId>
+                <artifactId>paper-api</artifactId>
+                <version>1.21.4-R0.1-SNAPSHOT</version>
                 <scope>provided</scope>
               </dependency>
             </dependencies>
+
             <build>
               <plugins>
                 <plugin>
                   <groupId>org.apache.maven.plugins</groupId>
                   <artifactId>maven-compiler-plugin</artifactId>
                   <version>3.13.0</version>
-                  <configuration><release>21</release></configuration>
-                </plugin>
-                <plugin>
-                  <groupId>org.apache.maven.plugins</groupId>
-                  <artifactId>maven-shade-plugin</artifactId>
-                  <version>3.6.0</version>
-                  <executions>
-                    <execution>
-                      <phase>package</phase>
-                      <goals><goal>shade</goal></goals>
-                    </execution>
-                  </executions>
+                  <configuration>
+                    <release>21</release>
+                  </configuration>
                 </plugin>
               </plugins>
             </build>
           </project>
           EOF
 
-          cat > src/main/java/pl/velocitylogin/VelocityLogin.java <<'EOF'
-          package pl.velocitylogin;
+          cat > src/main/resources/plugin.yml <<'EOF'
+          name: HubLogin
+          version: 1.0.0
+          main: pl.hublogin.HubLogin
+          api-version: '1.21'
 
-          import com.google.inject.Inject;
-          import com.velocitypowered.api.event.Subscribe;
-          import com.velocitypowered.api.event.connection.DisconnectEvent;
-          import com.velocitypowered.api.event.connection.LoginEvent;
-          import com.velocitypowered.api.event.player.ServerPostConnectEvent;
-          import com.velocitypowered.api.event.command.CommandExecuteEvent;
-          import com.velocitypowered.api.plugin.Plugin;
-          import com.velocitypowered.api.proxy.Player;
-          import com.velocitypowered.api.proxy.ProxyServer;
-          import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
-          import net.kyori.adventure.text.Component;
-          import org.slf4j.Logger;
+          commands:
+            zaloguj:
+              description: Logowanie na hubie
+              usage: /zaloguj <hasło>
 
-          import java.io.IOException;
+            zarejestruj:
+              description: Rejestracja na hubie
+              usage: /zarejestruj <hasło> <hasło>
+
+            wyjerestruj:
+              description: Wyrejestrowanie konta
+              usage: /wyjerestruj <hasło>
+          EOF
+
+          cat > src/main/java/pl/hublogin/HubLogin.java <<'EOF'
+          package pl.hublogin;
+
+          import org.bukkit.Location;
+          import org.bukkit.entity.Player;
+          import org.bukkit.event.EventHandler;
+          import org.bukkit.event.EventPriority;
+          import org.bukkit.event.Listener;
+          import org.bukkit.event.player.PlayerJoinEvent;
+          import org.bukkit.event.player.PlayerMoveEvent;
+          import org.bukkit.event.player.PlayerQuitEvent;
+          import org.bukkit.plugin.java.JavaPlugin;
+
           import java.nio.charset.StandardCharsets;
-          import java.nio.file.*;
+          import java.nio.file.Files;
+          import java.nio.file.Path;
           import java.security.MessageDigest;
-          import java.time.LocalDateTime;
-          import java.time.format.DateTimeFormatter;
-          import java.util.*;
-          import java.util.concurrent.ConcurrentHashMap;
+          import java.util.Base64;
+          import java.util.HashSet;
+          import java.util.Set;
+          import java.util.UUID;
 
-          @Plugin(id="velocitylogin", name="VelocityLogin", version="1.0.0")
-          public final class VelocityLogin {
-              private static final MinecraftChannelIdentifier CHANNEL =
-                      MinecraftChannelIdentifier.from("velocitylogin:main");
-              private static final DateTimeFormatter DATE =
-                      DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+          public final class HubLogin extends JavaPlugin implements Listener {
 
-              private final ProxyServer proxy;
-              private final Logger logger;
-              private final Path root = Path.of("plugins", "VelocityLogin");
-              private final Path infoDir = root.resolve("gracze");
-              private final Path secretDir = root.resolve("dane");
+              private final Set<UUID> logged = new HashSet<>();
 
-              private final Map<UUID, Long> sessions = new ConcurrentHashMap<>();
-              private final Set<UUID> logged = ConcurrentHashMap.newKeySet();
+              private Path players;
+              private Path data;
 
-              @Inject
-              public VelocityLogin(ProxyServer proxy, Logger logger) {
-                  this.proxy = proxy;
-                  this.logger = logger;
-                  try {
-                      Files.createDirectories(infoDir);
-                      Files.createDirectories(secretDir);
-                  } catch (IOException e) {
-                      logger.error("Nie można utworzyć folderów VelocityLogin", e);
-                  }
-                  proxy.getChannelRegistrar().register(CHANNEL);
-              }
-
-              @Subscribe
-              public void onLogin(LoginEvent event) {
-                  Player p = event.getPlayer();
-                  sessions.put(p.getUniqueId(), System.currentTimeMillis());
+              @Override
+              public void onEnable() {
+                  players = getDataFolder().toPath().resolve("gracze");
+                  data = getDataFolder().toPath().resolve("dane");
 
                   try {
-                      if (!Files.exists(infoFile(p))) {
-                          createInfo(p);
+                      Files.createDirectories(players);
+                      Files.createDirectories(data);
+                  } catch (Exception e) {
+                      getLogger().severe("Nie można utworzyć folderów HubLogin.");
+                  }
+
+                  getServer().getPluginManager().registerEvents(this, this);
+
+                  getCommand("zaloguj").setExecutor((sender, command, label, args) -> {
+                      if (!(sender instanceof Player player)) return true;
+
+                      if (args.length != 1) {
+                          player.sendMessage("§cUżyj: /zaloguj <hasło>");
+                          return true;
                       }
-                  } catch (IOException e) {
-                      logger.error("Błąd tworzenia pliku gracza " + p.getUsername(), e);
-                  }
-              }
 
-              @Subscribe
-              public void onServerPostConnect(ServerPostConnectEvent event) {
-                  sendState(event.getPlayer());
-              }
+                      login(player, args[0]);
+                      return true;
+                  });
 
-              @Subscribe
-              public void onDisconnect(DisconnectEvent event) {
-                  Player p = event.getPlayer();
-                  Long start = sessions.remove(p.getUniqueId());
+                  getCommand("zarejestruj").setExecutor((sender, command, label, args) -> {
+                      if (!(sender instanceof Player player)) return true;
 
-                  if (start != null) {
-                      try {
-                          addPlayTime(p, Math.max(0L,
-                                  (System.currentTimeMillis() - start) / 1000L));
-                      } catch (IOException e) {
-                          logger.error("Błąd zapisu czasu gry " + p.getUsername(), e);
+                      if (args.length != 2) {
+                          player.sendMessage("§cUżyj: /zarejestruj <hasło> <hasło>");
+                          return true;
                       }
-                  }
 
-                  logged.remove(p.getUniqueId());
+                      register(player, args[0], args[1]);
+                      return true;
+                  });
+
+                  getCommand("wyjerestruj").setExecutor((sender, command, label, args) -> {
+                      if (!(sender instanceof Player player)) return true;
+
+                      if (args.length != 1) {
+                          player.sendMessage("§cUżyj: /wyjerestruj <hasło>");
+                          return true;
+                      }
+
+                      unregister(player, args[0]);
+                      return true;
+                  });
               }
 
-              @Subscribe
-              public void onCommand(CommandExecuteEvent event) {
-                  if (!(event.getCommandSource() instanceof Player p)) return;
+              @Override
+              public void onDisable() {
+                  logged.clear();
+              }
 
-                  String raw = event.getCommand();
-                  if (raw == null || raw.isBlank()) return;
+              @EventHandler
+              public void onJoin(PlayerJoinEvent event) {
+                  Player player = event.getPlayer();
 
-                  String[] args = raw.trim().split("\\s+");
-                  String command = args[0].toLowerCase(Locale.ROOT);
-
-                  if (!command.equals("zaloguj")
-                          && !command.equals("zarejestruj")
-                          && !command.equals("wyjerestruj")) {
-                      return;
-                  }
-
-                  event.setResult(CommandExecuteEvent.CommandResult.denied());
+                  logged.remove(player.getUniqueId());
 
                   try {
-                      switch (command) {
-                          case "zarejestruj" -> {
-                              if (args.length != 3) {
-                                  msg(p, "§cUżyj: /zarejestruj <hasło> <hasło>");
-                                  return;
-                              }
-                              register(p, args[1], args[2]);
-                          }
-                          case "zaloguj" -> {
-                              if (args.length != 2) {
-                                  msg(p, "§cUżyj: /zaloguj <hasło>");
-                                  return;
-                              }
-                              login(p, args[1]);
-                          }
-                          case "wyjerestruj" -> {
-                              if (args.length != 2) {
-                                  msg(p, "§cUżyj: /wyjerestruj <hasło>");
-                                  return;
-                              }
-                              unregister(p, args[1]);
-                          }
+                      createPlayerFile(player);
+
+                      if (Files.exists(passwordFile(player))) {
+                          player.sendMessage("§eUżyj: §f/zaloguj <hasło>");
+                      } else {
+                          player.sendMessage("§eUżyj: §f/zarejestruj <hasło> <hasło>");
                       }
-                  } catch (IOException e) {
-                      logger.error("Błąd obsługi konta " + p.getUsername(), e);
-                      msg(p, "§cWystąpił błąd podczas zapisu konta.");
+                  } catch (Exception e) {
+                      getLogger().warning("Błąd danych gracza " + player.getName());
                   }
               }
 
-              private void register(Player p, String password, String confirm) throws IOException {
-                  if (Files.exists(secretFile(p))) {
-                      msg(p, "§cKonto jest już zajęte.");
+              /*
+               * Jedyny event wykonywany podczas próby ruchu.
+               * Nie ma timerów, schedulerów ani żadnych pętli.
+               *
+               * Obrót głowy działa normalnie.
+               * Blokowana jest tylko rzeczywista zmiana pozycji.
+               */
+              @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+              public void onMove(PlayerMoveEvent event) {
+                  Player player = event.getPlayer();
+
+                  if (logged.contains(player.getUniqueId())) {
                       return;
                   }
 
-                  if (password.length() < 4) {
-                      msg(p, "§cHasło musi mieć co najmniej 4 znaki.");
+                  Location from = event.getFrom();
+                  Location to = event.getTo();
+
+                  if (to == null) {
                       return;
                   }
 
-                  if (!password.equals(confirm)) {
-                      msg(p, "§cHasła nie są takie same.");
+                  if (from.getX() == to.getX()
+                          && from.getY() == to.getY()
+                          && from.getZ() == to.getZ()) {
                       return;
                   }
+
+                  event.setTo(from);
+              }
+
+              @EventHandler
+              public void onQuit(PlayerQuitEvent event) {
+                  logged.remove(event.getPlayer().getUniqueId());
+              }
+
+              private void register(Player player, String password, String confirm) {
+                  try {
+                      if (Files.exists(passwordFile(player))) {
+                          player.sendMessage("§cKonto jest już zarejestrowane.");
+                          return;
+                      }
+
+                      if (password.length() < 4) {
+                          player.sendMessage("§cHasło musi mieć minimum 4 znaki.");
+                          return;
+                      }
+
+                      if (!password.equals(confirm)) {
+                          player.sendMessage("§cHasła nie są takie same.");
+                          return;
+                      }
+
+                      Files.writeString(
+                              passwordFile(player),
+                              "hash: " + hash(password) + "\n" +
+                              "length: " + password.length() + "\n",
+                              StandardCharsets.UTF_8
+                      );
+
+                      update(player, "Konto", "zajęte");
+                      update(player, "Pokaż hasło", "false");
+                      update(player, "Hasło", stars(password.length()));
+
+                      logged.add(player.getUniqueId());
+
+                      player.sendMessage("§aKonto zostało zarejestrowane.");
+                  } catch (Exception e) {
+                      player.sendMessage("§cNie udało się zapisać konta.");
+                  }
+              }
+
+              private void login(Player player, String password) {
+                  try {
+                      Path file = passwordFile(player);
+
+                      if (!Files.exists(file)) {
+                          player.sendMessage("§cNie masz jeszcze konta.");
+                          player.sendMessage("§eUżyj: §f/zarejestruj <hasło> <hasło>");
+                          return;
+                      }
+
+                      String stored = value(
+                              Files.readString(file, StandardCharsets.UTF_8),
+                              "hash"
+                      );
+
+                      if (!hash(password).equals(stored)) {
+                          player.sendMessage("§cNiepoprawne hasło.");
+                          incrementInvalid(player);
+                          return;
+                      }
+
+                      logged.add(player.getUniqueId());
+
+                      player.sendMessage("§aZalogowano pomyślnie.");
+                  } catch (Exception e) {
+                      player.sendMessage("§cNie udało się odczytać konta.");
+                  }
+              }
+
+              private void unregister(Player player, String password) {
+                  try {
+                      Path file = passwordFile(player);
+
+                      if (!Files.exists(file)) {
+                          player.sendMessage("§cKonto jest wolne.");
+                          return;
+                      }
+
+                      String stored = value(
+                              Files.readString(file, StandardCharsets.UTF_8),
+                              "hash"
+                      );
+
+                      if (!hash(password).equals(stored)) {
+                          player.sendMessage("§cNiepoprawne hasło.");
+                          return;
+                      }
+
+                      Files.deleteIfExists(file);
+
+                      logged.remove(player.getUniqueId());
+
+                      update(player, "Konto", "wolne");
+                      update(player, "Hasło", "brak");
+
+                      player.sendMessage("§aKonto zostało wyrejestrowane.");
+                      player.sendMessage("§eUżyj: §f/zarejestruj <hasło> <hasło>");
+                  } catch (Exception e) {
+                      player.sendMessage("§cNie udało się wyrejestrować konta.");
+                  }
+              }
+
+              private void createPlayerFile(Player player) throws Exception {
+                  Path file = playerFile(player);
+
+                  if (Files.exists(file)) {
+                      return;
+                  }
+
+                  String ip = player.getAddress() == null
+                          ? "*"
+                          : player.getAddress().getAddress().getHostAddress();
 
                   Files.writeString(
-                          secretFile(p),
-                          "hash: " + hash(password) + "\n" +
-                          "length: " + password.length() + "\n",
-                          StandardCharsets.UTF_8
-                  );
-
-                  update(p, "Konto", "zajęte");
-                  update(p, "Pokaż hasło", "false");
-                  update(p, "Hasło", stars(password.length()));
-                  update(p, "Data logowania", now());
-                  update(p, "Ostatnie logowanie", now());
-                  increment(p, "Ile razy gracz się zalogował");
-
-                  logged.add(p.getUniqueId());
-                  sendState(p);
-                  msg(p, "§aKonto zostało zarejestrowane i zalogowane.");
-              }
-
-              private void login(Player p, String password) throws IOException {
-                  Path file = secretFile(p);
-
-                  if (!Files.exists(file)) {
-                      msg(p, "§cNajpierw użyj /zarejestruj <hasło> <hasło>");
-                      return;
-                  }
-
-                  String stored = value(Files.readString(file), "hash");
-
-                  if (stored != null && stored.equals(hash(password))) {
-                      logged.add(p.getUniqueId());
-
-                      update(p, "Data logowania", now());
-                      update(p, "Ostatnie logowanie", now());
-                      increment(p, "Ile razy gracz się zalogował");
-
-                      sendState(p);
-                      msg(p, "§aZalogowano pomyślnie.");
-                  } else {
-                      increment(p, "Ile razy gracz wpisał niepoprawne hasło");
-                      msg(p, "§cNiepoprawne hasło.");
-                  }
-              }
-
-              private void unregister(Player p, String password) throws IOException {
-                  Path file = secretFile(p);
-
-                  if (!Files.exists(file)) {
-                      msg(p, "§cKonto jest wolne.");
-                      return;
-                  }
-
-                  String stored = value(Files.readString(file), "hash");
-
-                  if (stored == null || !stored.equals(hash(password))) {
-                      increment(p, "Ile razy gracz wpisał niepoprawne hasło");
-                      msg(p, "§cNiepoprawne hasło.");
-                      return;
-                  }
-
-                  Files.deleteIfExists(file);
-                  logged.remove(p.getUniqueId());
-
-                  update(p, "Konto", "wolne");
-                  update(p, "Hasło", "brak");
-
-                  sendState(p);
-                  msg(p, "§aKonto wyrejestrowane. Użyj: /zarejestruj <hasło> <hasło>");
-              }
-
-              private void sendState(Player p) {
-                  p.getCurrentServer().ifPresent(server ->
-                          server.sendPluginMessage(
-                                  CHANNEL,
-                                  ((logged.contains(p.getUniqueId()) ? "UNLOCK|" : "LOCK|")
-                                          + p.getUniqueId())
-                                          .getBytes(StandardCharsets.UTF_8)
-                          )
-                  );
-              }
-
-              private void createInfo(Player p) throws IOException {
-                  String ip = p.getRemoteAddress().getAddress().getHostAddress();
-                  String premium = proxy.getConfiguration().isOnlineMode()
-                          ? "premium"
-                          : "no premium";
-                  String now = now();
-
-                  String text =
-                          "Nick: " + p.getUsername() + "\n" +
+                          file,
+                          "Nick: " + player.getName() + "\n" +
                           "Konto: wolne\n" +
-                          "IP gracza: " + ip + "\n" +
                           "Pokaż ip: true\n" +
-                          "gracz ma: " + premium + "\n" +
+                          "IP gracza: " + ip + "\n" +
+                          "gracz ma: " +
+                          (getServer().getOnlineMode() ? "premium" : "no premium") + "\n" +
                           "Logowanie ip: false\n" +
                           "Pokaż hasło: false\n" +
                           "Hasło: brak\n" +
-                          "Data dołączenia: " + now + "\n" +
+                          "Data dołączenia: teraz\n" +
                           "Data logowania: brak\n" +
                           "Czas gry: 0h 0m 0s\n" +
                           "Ostatnie logowanie: brak\n" +
                           "Ile razy gracz się zalogował: 0\n" +
-                          "Ile razy gracz wpisał niepoprawne hasło: 0\n";
-
-                  Files.writeString(infoFile(p), text, StandardCharsets.UTF_8);
+                          "Ile razy gracz wpisał niepoprawne hasło: 0\n",
+                          StandardCharsets.UTF_8
+                  );
               }
 
-              private void addPlayTime(Player p, long seconds) throws IOException {
-                  Path file = infoFile(p);
-                  String text = Files.readString(file);
-                  long total = parseTime(value(text, "Czas gry")) + seconds;
-                  Files.writeString(file,
-                          replace(text, "Czas gry", formatTime(total)),
-                          StandardCharsets.UTF_8);
+              private void update(Player player, String key, String value) throws Exception {
+                  Path file = playerFile(player);
+                  String text = Files.readString(file, StandardCharsets.UTF_8);
+
+                  String[] lines = text.split("\\R", -1);
+
+                  for (int i = 0; i < lines.length; i++) {
+                      if (lines[i].startsWith(key + ":")) {
+                          lines[i] = key + ": " + value;
+                          break;
+                      }
+                  }
+
+                  Files.writeString(
+                          file,
+                          String.join("\n", lines),
+                          StandardCharsets.UTF_8
+                  );
               }
 
-              private void increment(Player p, String key) throws IOException {
-                  Path file = infoFile(p);
-                  String text = Files.readString(file);
-                  int n = intValue(value(text, key));
-                  Files.writeString(file,
-                          replace(text, key, String.valueOf(n + 1)),
-                          StandardCharsets.UTF_8);
-              }
-
-              private void update(Player p, String key, String val) throws IOException {
-                  Path file = infoFile(p);
-                  String text = Files.readString(file);
-                  Files.writeString(file,
-                          replace(text, key, val),
-                          StandardCharsets.UTF_8);
-              }
-
-              private Path infoFile(Player p) {
-                  return infoDir.resolve(p.getUsername() + ".yml");
-              }
-
-              private Path secretFile(Player p) {
-                  return secretDir.resolve(p.getUniqueId() + ".yml");
-              }
-
-              private static String hash(String password) {
+              private void incrementInvalid(Player player) {
                   try {
-                      byte[] bytes = MessageDigest.getInstance("SHA-256")
-                              .digest(password.getBytes(StandardCharsets.UTF_8));
-                      return Base64.getEncoder().encodeToString(bytes);
-                  } catch (Exception e) {
-                      throw new IllegalStateException(e);
+                      Path file = playerFile(player);
+                      String text = Files.readString(file, StandardCharsets.UTF_8);
+
+                      String old = value(text, "Ile razy gracz wpisał niepoprawne hasło");
+
+                      int number;
+
+                      try {
+                          number = Integer.parseInt(old);
+                      } catch (Exception e) {
+                          number = 0;
+                      }
+
+                      update(player,
+                              "Ile razy gracz wpisał niepoprawne hasło",
+                              String.valueOf(number + 1));
+                  } catch (Exception ignored) {
                   }
               }
 
+              private Path playerFile(Player player) {
+                  return players.resolve(player.getName() + ".yml");
+              }
+
+              private Path passwordFile(Player player) {
+                  return data.resolve(player.getUniqueId() + ".yml");
+              }
+
               private static String value(String text, String key) {
-                  if (text == null) return null;
                   for (String line : text.split("\\R")) {
                       if (line.startsWith(key + ": ")) {
                           return line.substring(key.length() + 2).trim();
                       }
                   }
-                  return null;
+
+                  return "";
               }
 
-              private static String replace(String text, String key, String value) {
-                  return text.replaceAll(
-                          "(?m)^" + java.util.regex.Pattern.quote(key) + ":.*$",
-                          java.util.regex.Matcher.quoteReplacement(key + ": " + value)
+              private static String hash(String password) throws Exception {
+                  MessageDigest digest = MessageDigest.getInstance("SHA-256");
+
+                  return Base64.getEncoder().encodeToString(
+                          digest.digest(password.getBytes(StandardCharsets.UTF_8))
                   );
-              }
-
-              private static int intValue(String value) {
-                  try {
-                      return Integer.parseInt(value);
-                  } catch (Exception e) {
-                      return 0;
-                  }
-              }
-
-              private static long parseTime(String value) {
-                  if (value == null) return 0;
-                  try {
-                      String[] a = value.split("\\s+");
-                      return Long.parseLong(a[0].replace("h", "")) * 3600L
-                              + Long.parseLong(a[1].replace("m", "")) * 60L
-                              + Long.parseLong(a[2].replace("s", ""));
-                  } catch (Exception e) {
-                      return 0;
-                  }
-              }
-
-              private static String formatTime(long seconds) {
-                  return (seconds / 3600L) + "h "
-                          + ((seconds % 3600L) / 60L) + "m "
-                          + (seconds % 60L) + "s";
               }
 
               private static String stars(int length) {
                   return "*".repeat(Math.max(0, length));
               }
-
-              private static String now() {
-                  return DATE.format(LocalDateTime.now());
-              }
-
-              private static void msg(Player p, String text) {
-                  p.sendMessage(Component.text(text));
-              }
           }
           EOF
 
-      - name: Build
+      - name: Zbuduj plugin
         run: mvn -q package
 
-      - uses: actions/upload-artifact@v4
+      - name: Udostępnij JAR
+        uses: actions/upload-artifact@v4
         with:
-          name: VelocityLogin
-          path: target/VelocityLogin-*.jar
+          name: HubLogin
+          path: target/HubLogin-*.jar
